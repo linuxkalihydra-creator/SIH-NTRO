@@ -84,6 +84,21 @@ class Neo4jClient:
         with self._driver.session() as session:
             session.run("MATCH (n) DETACH DELETE n").consume()
 
+    def clear_dataset_graph(self, dataset_id: str) -> int:
+        """Remove all graph data for a specific dataset, ensuring investigation isolation."""
+        if self._driver is None:
+            raise Neo4jUnavailableError("Neo4j connection is not available; call connect() first.")
+        with self._driver.session() as session:
+            result = session.run(
+                "MATCH (n {dataset_id: $dataset_id}) DETACH DELETE n RETURN count(n) as count",
+                dataset_id=dataset_id
+            )
+            record = result.single()
+            count = record["count"] if record else 0
+            if count > 0:
+                logger.info(f"Cleared {count} nodes for dataset {dataset_id}")
+            return count
+
     def _normalize_graph_records(self, graph_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Normalize raw record dictionaries into graph node entries for batch writes."""
         if not graph_records:

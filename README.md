@@ -118,6 +118,121 @@ uv run pytest -q
 uv run python -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+## Graph Visualization
+
+The application includes a **Graph Visualization feature** within the Clusters page. When analyzing a dataset:
+
+1. Navigate to **Clusters** after analysis completes
+2. Click a cluster card to expand it
+3. The **Graph** section displays a real-time Neo4j visualization showing:
+   - **Nodes**: Wallets, Transactions, IP addresses, ASNs, and Countries (real entities from Neo4j)
+   - **Edges**: Relationships like INPUT_FROM, OUTPUT_TO, OBSERVED_IN, LOCATED_IN, HAS_ASN
+   - **Node Types**: Color-coded by entity type for easy visual identification
+   - **Interactions**: Pan, zoom, drag nodes, fit-to-screen, and reset layout
+
+### Graph Performance
+
+The graph is optimized for performance:
+- Maximum 200 nodes displayed per cluster
+- Maximum 500 edges displayed per cluster
+- Stale requests are cancelled when cluster changes
+- Graph is destroyed during cleanup to prevent memory leaks
+- Graph only loads when cluster is expanded (lazy loading)
+
+### Graph Failure Handling
+
+If Neo4j is unavailable, the application gracefully shows:
+- "Graph data unavailable" message with a Retry button
+- Clusters list remains fully functional
+- Alerts and statistics work independently
+
+## Neo4j Investigation Isolation
+
+The application ensures **strict investigation isolation** through automatic Neo4j data reset:
+
+### Reset Behavior
+
+When a **new dataset is uploaded**:
+1. Previous investigation graph data is cleared from Neo4j
+2. New dataset analysis runs
+3. New graph data persists to Neo4j
+4. No mixing of Dataset A and Dataset B records
+
+### When Reset Occurs
+
+Neo4j data is reset **only** when starting a genuinely new investigation:
+- ✅ Uploading a new dataset triggers reset
+- ❌ Browser refresh does NOT reset (restores same dataset)
+- ❌ Opening Clusters does NOT reset
+- ❌ Fetching stats/alerts/graph does NOT reset
+- ❌ Refreshing page does NOT reset (previous dataset remains active)
+
+### Dataset-Aware Deletion
+
+The reset is dataset-aware:
+- Only removes nodes tagged with the current `dataset_id`
+- Leaves Neo4j running (never restarts the service)
+- Safe if database contains multiple datasets
+- Fast operation (targeted deletion, not full database clear)
+
+## Workflow
+
+### Upload a Dataset
+
+```
+User
+  ↓
+[Upload Dataset]
+  ↓
+FormData POST /datasets/upload
+  ↓
+Backend creates dataset entry
+  ↓
+Returns dataset_id
+```
+
+### Analyze and Persist to Neo4j
+
+```
+POST /analyze with dataset_id
+  ↓
+Existing pipeline runs
+  ↓
+Neo4j previous data cleared (dataset-aware reset)
+  ↓
+New investigation graph persisted to Neo4j
+  ↓
+Dashboard displays real data
+```
+
+### View Graph in Clusters
+
+```
+Clusters page
+  ↓
+Click cluster card to expand
+  ↓
+Graph section loads
+  ↓
+Fetches real Neo4j neighborhood
+  ↓
+Cytoscape renders interactive visualization
+```
+
+### Upload Another Dataset
+
+```
+Dataset A active
+  ↓
+[Upload Dataset B]
+  ↓
+Dataset A cleared from Neo4j
+  ↓
+Dataset B analyzed and persisted
+  ↓
+Graph shows only Dataset B
+```
+
 ## Project layout
 
 ```text

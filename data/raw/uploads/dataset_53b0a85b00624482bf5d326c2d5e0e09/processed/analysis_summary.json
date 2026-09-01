@@ -1,0 +1,91 @@
+{
+  "dataset_statistics": {
+    "total_records": 10000,
+    "unique_wallets": 2545,
+    "unique_ips": 762,
+    "behavior_distribution": {
+      "EXCHANGE_LIKE": 2000,
+      "HIGH_NETWORK_DIVERSITY": 500,
+      "LAYERING_LIKE": 1000,
+      "MIXING_LIKE": 1500,
+      "NORMAL": 3500,
+      "RAPID_TRANSFER": 1500
+    }
+  },
+  "ingestion_statistics": {
+    "total_records": 10000,
+    "valid_records": 10000,
+    "invalid_records": 0,
+    "duplicates": 0,
+    "missing_fields": {}
+  },
+  "validation_statistics": {
+    "valid_records": 10000,
+    "invalid_records": 0,
+    "duplicate_records": 0,
+    "missing_fields": {}
+  },
+  "correlation_statistics": {
+    "wallet_links": 2545,
+    "ip_links": 762,
+    "max_wallet_related_transactions": 1000
+  },
+  "graph_statistics": {
+    "node_count": 146983,
+    "node_types": {
+      "ASN": 45661,
+      "Country": 45661,
+      "IP": 10000,
+      "Transaction": 10000,
+      "Wallet": 35661
+    },
+    "wallet_nodes": 35661,
+    "transaction_nodes": 10000,
+    "ip_nodes": 10000
+  },
+  "processing_duration_seconds": 27.852709,
+  "graph_available": true,
+  "warnings": [],
+  "errors": [],
+  "evaluation": {
+    "synthetic_ground_truth": true,
+    "normal_entities": 882,
+    "anomalous_entities": 128,
+    "anomaly_rate_by_profile": {
+      "EXCHANGE_LIKE": {
+        "normal_entities": 505,
+        "anomalous_entities": 3,
+        "anomaly_rate": 0.5905511811023622
+      },
+      "HIGH_NETWORK_DIVERSITY": {
+        "normal_entities": 74,
+        "anomalous_entities": 59,
+        "anomaly_rate": 44.3609022556391
+      },
+      "LAYERING_LIKE": {
+        "normal_entities": 255,
+        "anomalous_entities": 1,
+        "anomaly_rate": 0.390625
+      },
+      "MIXING_LIKE": {
+        "normal_entities": 336,
+        "anomalous_entities": 47,
+        "anomaly_rate": 12.27154046997389
+      },
+      "NORMAL": {
+        "normal_entities": 871,
+        "anomalous_entities": 11,
+        "anomaly_rate": 1.2471655328798186
+      },
+      "RAPID_TRANSFER": {
+        "normal_entities": 376,
+        "anomalous_entities": 7,
+        "anomaly_rate": 1.8276762402088773
+      }
+    },
+    "normal_profile_false_positive_rate": 1.2472,
+    "cluster_distribution": {
+      "-1": 2545
+    }
+  }
+}

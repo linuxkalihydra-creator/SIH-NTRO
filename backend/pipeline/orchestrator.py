@@ -206,6 +206,11 @@ class AnalysisOrchestrator:
         client = Neo4jClient()
         try:
             client.connect()
+            # Clear previous investigation data for this dataset to ensure isolation
+            cleared = client.clear_dataset_graph(dataset_id)
+            if cleared > 0:
+                logger.info(f"Cleared previous investigation data: {cleared} nodes for dataset {dataset_id}")
+            # Persist new dataset investigation data
             persisted = client.persist_graph(graph_records, dataset_id=dataset_id)
             graph_available = persisted > 0
             graph_message = f"Neo4j persistence verified with {persisted} records" if graph_available else "Neo4j connected but persistence did not write any graph records"

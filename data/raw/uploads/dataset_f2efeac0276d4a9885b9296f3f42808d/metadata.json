@@ -1,0 +1,13 @@
+{
+  "dataset_id": "dataset_f2efeac0276d4a9885b9296f3f42808d",
+  "filename": "transactions.json",
+  "format": "json",
+  "size_bytes": 27,
+  "created_at": "2026-09-01T17:50:25.692195+00:00",
+  "updated_at": "2026-09-01T17:50:25.692215+00:00",
+  "status": "uploaded",
+  "record_count": null,
+  "analysis_status": "not_started",
+  "error_message": null,
+  "source_path": "data/raw/uploads/dataset_f2efeac0276d4a9885b9296f3f42808d/source.json"
+}

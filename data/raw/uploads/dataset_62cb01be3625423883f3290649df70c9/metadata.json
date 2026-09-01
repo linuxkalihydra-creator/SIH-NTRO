@@ -1,0 +1,13 @@
+{
+  "dataset_id": "dataset_62cb01be3625423883f3290649df70c9",
+  "filename": "transactions.xml",
+  "format": "xml",
+  "size_bytes": 44,
+  "created_at": "2026-09-01T17:50:25.730178+00:00",
+  "updated_at": "2026-09-01T17:50:25.730199+00:00",
+  "status": "uploaded",
+  "record_count": null,
+  "analysis_status": "not_started",
+  "error_message": null,
+  "source_path": "data/raw/uploads/dataset_62cb01be3625423883f3290649df70c9/source.xml"
+}
