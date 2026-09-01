@@ -1,5 +1,5 @@
-/**
- * InvestigationGraph – Cytoscape-based link-analysis graph for the Clusters page.
+﻿/**
+ * InvestigationGraph â€“ Cytoscape-based link-analysis graph for the Clusters page.
  *
  * Layout: uses Cytoscape's built-in `cose` layout (physics-based, produces
  * well-separated nodes). Zero external layout plugins required.
@@ -13,11 +13,39 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import CytoscapeComponent from 'react-cytoscapejs';
 import './InvestigationGraph.css';
 
-// ─── Node types ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Local error boundary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Prevents a Cytoscape initialization crash from blanking the entire Clusters page.
+class GraphErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, message: error?.message || 'Unknown error' };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="graph-state">
+          <span className="graph-state-icon">âš ï¸</span>
+          <p>Graph rendering failed: {this.state.message}</p>
+          <p style={{ fontSize: 12, color: '#4a7080' }}>
+            The rest of the cluster data is still available above.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// â”€â”€â”€ Node types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const NODE_TYPES = ['Wallet', 'Transaction', 'IP', 'ASN', 'Country'];
 
-// Colours per type – bright but professional
+// Colours per type â€“ bright but professional
 const TYPE_COLORS = {
   Wallet:      { bg: '#e07b39', border: '#ffb07a', shape: 'ellipse' },
   Transaction: { bg: '#3a86cc', border: '#7ec8f5', shape: 'roundrectangle' },
@@ -26,7 +54,7 @@ const TYPE_COLORS = {
   Country:     { bg: '#c9a227', border: '#f5d97a', shape: 'star' },
 };
 
-// ─── Cytoscape stylesheet ────────────────────────────────────────────────────
+// â”€â”€â”€ Cytoscape stylesheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const buildStylesheet = (labelsVisible) => [
   {
@@ -162,11 +190,11 @@ const buildStylesheet = (labelsVisible) => [
   },
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function shortLabel(node) {
   const raw = String(node.label || node.id || '');
-  return raw.length > 22 ? `${raw.slice(0, 19)}…` : raw;
+  return raw.length > 22 ? `${raw.slice(0, 19)}â€¦` : raw;
 }
 
 function chooseLayout(nodeCount) {
@@ -180,7 +208,7 @@ function chooseLayout(nodeCount) {
     };
   }
   return {
-    name: 'cose',          // built-in physics layout – no plugin needed
+    name: 'cose',          // built-in physics layout â€“ no plugin needed
     animate: false,
     padding: 50,
     nodeRepulsion: () => 8000,
@@ -198,12 +226,12 @@ function chooseLayout(nodeCount) {
 
 // Format a raw property value for display
 function fmtValue(val) {
-  if (val === null || val === undefined) return '—';
+  if (val === null || val === undefined) return 'â€”';
   if (typeof val === 'number') return Number.isInteger(val) ? String(val) : val.toFixed(4);
   return String(val);
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
   const cyRef = useRef(null);
@@ -215,21 +243,66 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNodeData, setSelectedNodeData] = useState(null);
 
-  // ── Elements memo – only recalculated when data changes ──────────────────
+  // â”€â”€ Elements memo â€“ only recalculated when data changes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Validates and sanitises API data so Cytoscape never receives:
+  //   â€¢ nodes with undefined/duplicate IDs (would throw "Can't create second element")
+  //   â€¢ edges whose source/target reference a missing node
+  //   â€¢ edges missing source or target fields entirely
   const elements = useMemo(() => {
-    const nodes = (data?.nodes || []).map((node) => ({
-      data: { ...node, label: shortLabel(node) },
-    }));
-    const edges = (data?.edges || []).map((edge) => ({ data: edge }));
-    return [...nodes, ...edges];
+    const rawNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+    const rawEdges = Array.isArray(data?.edges) ? data.edges : [];
+
+    // Build validated node list (skip any node whose id is missing/null/undefined)
+    const seenIds = new Set();
+    const validNodes = [];
+    for (const node of rawNodes) {
+      const nodeId = node?.id != null ? String(node.id) : null;
+      if (!nodeId || seenIds.has(nodeId)) continue; // skip missing/duplicate IDs
+      seenIds.add(nodeId);
+      // Flatten nested `properties` object into data so they appear in the details panel.
+      const { properties, ...rest } = node;
+      validNodes.push({
+        data: {
+          ...rest,
+          ...(properties && typeof properties === 'object' ? properties : {}),
+          id: nodeId,
+          label: shortLabel({ ...rest, id: nodeId }),
+        },
+      });
+    }
+
+    // Build validated edge list (skip edges with missing source/target or orphaned refs)
+    const seenEdgeIds = new Set();
+    const validEdges = [];
+    for (const edge of rawEdges) {
+      const edgeId = edge?.id != null ? String(edge.id) : null;
+      const src   = edge?.source != null ? String(edge.source) : null;
+      const tgt   = edge?.target != null ? String(edge.target) : null;
+      if (!src || !tgt) continue;              // must have source + target
+      if (!seenIds.has(src) || !seenIds.has(tgt)) continue; // both endpoints must exist
+      if (edgeId && seenEdgeIds.has(edgeId)) continue;       // no duplicate edge IDs
+      if (edgeId) seenEdgeIds.add(edgeId);
+      const { properties: edgeProps, ...edgeRest } = edge;
+      validEdges.push({
+        data: {
+          ...edgeRest,
+          ...(edgeProps && typeof edgeProps === 'object' ? edgeProps : {}),
+          source: src,
+          target: tgt,
+          ...(edgeId ? { id: edgeId } : {}),
+        },
+      });
+    }
+
+    return [...validNodes, ...validEdges];
   }, [data]);
 
   const nodeCount = data?.nodes?.length ?? 0;
 
-  // ── Stylesheet memo – recalculated only when labelsVisible changes ────────
+  // â”€â”€ Stylesheet memo â€“ recalculated only when labelsVisible changes â”€â”€â”€â”€â”€â”€â”€â”€
   const stylesheet = useMemo(() => buildStylesheet(labelsVisible), [labelsVisible]);
 
-  // ── Highlight wallet on prop change ──────────────────────────────────────
+  // â”€â”€ Highlight wallet on prop change â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -244,7 +317,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
     }
   }, [walletId, elements]);
 
-  // ── ResizeObserver for responsive canvas ─────────────────────────────────
+  // â”€â”€ ResizeObserver for responsive canvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !window.ResizeObserver) return undefined;
@@ -255,7 +328,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
     return () => obs.disconnect();
   }, []);
 
-  // ── Cleanup on unmount ────────────────────────────────────────────────────
+  // â”€â”€ Cleanup on unmount â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(
     () => () => {
       const cy = cyRef.current;
@@ -266,7 +339,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
     [],
   );
 
-  // ── Node tap handler ──────────────────────────────────────────────────────
+  // â”€â”€ Node tap handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleNodeTap = useCallback(
     (event) => {
       const node = event.target;
@@ -286,7 +359,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
     [onNodeSelect],
   );
 
-  // ── cy callback – wire up once, reuse same instance ──────────────────────
+  // â”€â”€ cy callback â€“ wire up once, reuse same instance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleCyInit = useCallback(
     (cy) => {
       if (cyRef.current === cy) return;
@@ -301,7 +374,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
     [handleNodeTap],
   );
 
-  // ── Filter toggle ─────────────────────────────────────────────────────────
+  // â”€â”€ Filter toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const applyFilters = useCallback((nextFilters) => {
     setFilters(nextFilters);
     const cy = cyRef.current;
@@ -311,7 +384,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
     });
   }, []);
 
-  // ── Toolbar actions ───────────────────────────────────────────────────────
+  // â”€â”€ Toolbar actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleFit = useCallback(() => cyRef.current?.fit(undefined, 40), []);
 
   const handleCenter = useCallback(() => {
@@ -340,7 +413,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
 
   const handleToggleLabels = useCallback(() => setLabelsVisible((v) => !v), []);
 
-  // ── Search ────────────────────────────────────────────────────────────────
+  // â”€â”€ Search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleSearch = useCallback(
     (e) => {
       e.preventDefault();
@@ -388,18 +461,18 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
     setSelectedNodeData(null);
   }, []);
 
-  // ── Dismiss details panel ─────────────────────────────────────────────────
+  // â”€â”€ Dismiss details panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleDismissDetails = useCallback(() => {
     setSelectedNodeData(null);
     cyRef.current?.elements().removeClass('focus connected dimmed search-hit');
     onNodeSelect?.(null);
   }, [onNodeSelect]);
 
-  // ── Guard: graph data unavailable ─────────────────────────────────────────
+  // â”€â”€ Guard: graph data unavailable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (!data?.graph_available) {
     return (
       <div className="graph-state">
-        <span className="graph-state-icon">⚠️</span>
+        <span className="graph-state-icon">âš ï¸</span>
         <p>Neo4j unavailable. The graph could not be retrieved.</p>
       </div>
     );
@@ -407,7 +480,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
   if (!data.nodes?.length) {
     return (
       <div className="graph-state">
-        <span className="graph-state-icon">🔍</span>
+        <span className="graph-state-icon">ðŸ”</span>
         <p>No graph data available for this cluster.</p>
       </div>
     );
@@ -415,10 +488,10 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
 
   const layout = chooseLayout(nodeCount);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
     <div className="investigation-graph">
-      {/* ── Toolbar ── */}
+      {/* â”€â”€ Toolbar â”€â”€ */}
       <div className="graph-toolbar">
         <div className="toolbar-section toolbar-actions">
           <button type="button" className="toolbar-btn" onClick={handleFit} title="Fit graph to view">
@@ -455,7 +528,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
           <input
             type="search"
             className="search-input"
-            placeholder="Search node…"
+            placeholder="Search nodeâ€¦"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             aria-label="Search node by name or address"
@@ -464,12 +537,12 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           </button>
           {searchQuery && (
-            <button type="button" className="toolbar-btn clear-btn" onClick={handleClearSearch} title="Clear search">✕</button>
+            <button type="button" className="toolbar-btn clear-btn" onClick={handleClearSearch} title="Clear search">âœ•</button>
           )}
         </form>
       </div>
 
-      {/* ── Filters ── */}
+      {/* â”€â”€ Filters â”€â”€ */}
       <div className="graph-filters">
         {NODE_TYPES.map((type) => {
           const col = TYPE_COLORS[type];
@@ -493,22 +566,24 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
         <span className="node-count">{nodeCount} nodes</span>
       </div>
 
-      {/* ── Canvas + side panel ── */}
+      {/* â”€â”€ Canvas + side panel â”€â”€ */}
       <div className="graph-body">
         <div className="graph-canvas" ref={containerRef}>
-          <CytoscapeComponent
-            elements={elements}
-            stylesheet={stylesheet}
-            cy={handleCyInit}
-            layout={layout}
-            style={{ width: '100%', height: '100%' }}
-            minZoom={0.1}
-            maxZoom={4}
-            wheelSensitivity={0.3}
-          />
+          <GraphErrorBoundary>
+            <CytoscapeComponent
+              elements={elements}
+              stylesheet={stylesheet}
+              cy={handleCyInit}
+              layout={layout}
+              style={{ width: '100%', height: '100%' }}
+              minZoom={0.1}
+              maxZoom={4}
+              wheelSensitivity={0.3}
+            />
+          </GraphErrorBoundary>
         </div>
 
-        {/* ── Node details panel ── */}
+        {/* â”€â”€ Node details panel â”€â”€ */}
         {selectedNodeData && (
           <div className="node-details-panel" role="complementary" aria-label="Node details">
             <div className="node-details-header">
@@ -524,7 +599,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
                 onClick={handleDismissDetails}
                 aria-label="Close details"
               >
-                ✕
+                âœ•
               </button>
             </div>
             <div className="node-details-body">
@@ -543,7 +618,7 @@ export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
         )}
       </div>
 
-      {/* ── Legend ── */}
+      {/* â”€â”€ Legend â”€â”€ */}
       <div className="graph-legend">
         {NODE_TYPES.map((type) => {
           const col = TYPE_COLORS[type];
