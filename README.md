@@ -1,247 +1,579 @@
-# Bitcoin Investigation Platform
+# 🔎 Bitcoin Investigation Platform
 
-This project is an offline, Linux-only prototype for exploring synthetic Bitcoin investigation workflows. It is designed for early-stage local development and experimentation without connecting to real Bitcoin networks or real-world criminal datasets.
+> **An offline, graph-powered platform for analyzing Bitcoin transaction patterns, identifying suspicious behavioral clusters, and generating explainable investigative leads.**
 
-## Synthetic Dataset Generator
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python\&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi\&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Neo4j](https://img.shields.io/badge/Neo4j-Graph%20Database-4581C3?logo=neo4j\&logoColor=white)](https://neo4j.com/)
+[![React](https://img.shields.io/badge/React-Frontend-61DAFB?logo=react\&logoColor=black)](https://react.dev/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-This repository includes a synthetic data generator for Bitcoin-like transaction and network observations. The data is generated locally and is intentionally not tied to any real blockchain records or seized data.
+---
 
-### Why use synthetic data?
+## 📌 Overview
 
-The goal is to create a realistic, reproducible, offline dataset that can support later phases such as:
+**Bitcoin Investigation Platform** is a local, offline investigation environment designed to help analysts explore Bitcoin-like transaction activity through **data ingestion, behavioral analysis, clustering, alerts, and graph-based investigation**.
 
-- ingestion from CSV/JSON/XML
-- normalization and enrichment
-- IP/wallet/TX correlation
-- anomaly detection
-- clustering and evaluation
-- explainable investigative lead generation
-- dashboard and link-analysis prototyping
+The platform transforms transaction records into an interconnected investigation graph containing entities such as:
 
-Synthetic data allows the project to remain fully offline, deterministic, and safe for testing without relying on real Bitcoin network observations.
+* 💰 Wallet addresses
+* 🔗 Transactions
+* 🌐 IP addresses
+* 🛰️ Autonomous Systems (ASNs)
+* 🌍 Countries
+* 🔄 Transaction relationships
 
-### Important fields
+The system is intentionally designed around **synthetic data**, allowing investigation workflows to be developed and tested without connecting to the real Bitcoin network or using real-world criminal datasets.
 
-Each generated record contains fields such as:
+---
 
-- `timestamp`: UTC timestamp for the network/transaction event
-- `src_ip` and `dst_ip`: synthetic IPv4 addresses in documentation/test ranges
-- `src_port` and `dst_port`: synthetic network ports, with Bitcoin P2P port 8333 used often for realism
-- `txid`: synthetic transaction identifier
-- `input_addresses` and `output_addresses`: wallet-like addresses
-- `input_amounts` and `output_amounts`: BTC-like transfer amounts
-- `fee`: transaction fee approximation
-- `script_type`: transaction script type
-- `geo_country`: synthetic country code
-- `asn`: synthetic autonomous system number
-- `behavior_type`: the synthetic generation profile used for evaluation only
+## 🎯 Problem Statement
 
-The `behavior_type` field is only a generation label. It is not intended to be used as a model feature unless explicitly requested later.
+Cryptocurrency transactions are transparent, but large transaction networks can become extremely difficult to investigate manually.
 
-### Behavioral profiles
+A single wallet may interact with hundreds of addresses, IPs, transactions, exchanges, and geographic locations. Traditional tabular analysis makes it difficult to understand these relationships.
 
-The generator creates multiple synthetic behavior groups:
+This platform addresses that challenge by combining:
 
-- `NORMAL`: baseline, low-volume and low-diversity activity
-- `EXCHANGE_LIKE`: high-activity exchange-like flows with more counterparties
-- `RAPID_TRANSFER`: quick movement between related wallets
-- `LAYERING_LIKE`: multi-hop synthetic chains for layering patterns
-- `MIXING_LIKE`: multiple-input, multiple-output transfers with balanced splits
-- `HIGH_NETWORK_DIVERSITY`: one wallet associated with many IPs/ASNs/countries
+**Data Ingestion → Normalization → Behavioral Analysis → Clustering → Graph Investigation → Explainable Leads**
 
-These are synthetic behavioral patterns for experimentation only; they are not labels of real criminal activity.
+The goal is to provide investigators with a unified environment for understanding complex transaction networks.
 
-### Generate the dataset
+---
 
-From the project root, run:
+## ✨ Key Features
+
+### 📂 1. Dataset-Driven Investigation
+
+Upload a transaction dataset and start an investigation directly from the platform.
+
+Supported formats include:
+
+* CSV
+* JSON
+* XML
+
+Each uploaded dataset receives a unique `dataset_id`, allowing the investigation pipeline and Neo4j graph to remain isolated.
+
+---
+
+### 🧪 2. Synthetic Dataset Generation
+
+The project includes a configurable synthetic Bitcoin-like dataset generator.
+
+Generate 1,000 records:
 
 ```bash
 uv run python scripts/generate_dataset.py --records 1000
 ```
 
-For a larger dataset:
+Generate 10,000 records:
 
 ```bash
 uv run python scripts/generate_dataset.py --records 10000
 ```
 
-### Output files
+Generated datasets are available as:
 
-The generated files are written to:
+```text
+data/synthetic/
+├── transactions.csv
+├── transactions.json
+└── transactions.xml
+```
 
-- `data/synthetic/transactions.csv`
-- `data/synthetic/transactions.json`
-- `data/synthetic/transactions.xml`
+The generator produces realistic investigation-oriented fields including:
 
-These three files represent the same synthetic dataset in different formats.
+```text
+timestamp
+src_ip
+dst_ip
+src_port
+dst_port
+txid
+input_addresses
+output_addresses
+input_amounts
+output_amounts
+fee
+script_type
+geo_country
+asn
+behavior_type
+```
 
-### Data quality
+---
 
-The generator validates the created records before writing them. It checks for:
+## 🧠 Behavioral Profiles
 
-- required fields
-- unique transaction identifiers
-- valid timestamps
-- valid IPv4 addresses
-- valid port ranges
-- non-negative amounts and fees
-- consistent input/output totals
-- valid behavior labels
+The synthetic generator supports multiple behavioral patterns for testing the investigation pipeline.
 
-### Synthetic data notice
+| Profile                  | Description                                             |
+| ------------------------ | ------------------------------------------------------- |
+| `NORMAL`                 | Baseline, low-volume activity                           |
+| `EXCHANGE_LIKE`          | High-volume activity with many counterparties           |
+| `RAPID_TRANSFER`         | Rapid movement between related wallets                  |
+| `LAYERING_LIKE`          | Multi-hop transaction chains                            |
+| `MIXING_LIKE`            | Multi-input/multi-output splitting behavior             |
+| `HIGH_NETWORK_DIVERSITY` | Wallets associated with diverse IPs, ASNs and countries |
 
-This project is intentionally designed for offline experimentation. The dataset is synthetic, clearly labeled as such, and does not represent real Bitcoin transactions or criminal activity.
+> ⚠️ These profiles are **synthetic behavioral patterns** used exclusively for experimentation and evaluation. They are not labels for real criminal activity.
 
-## Run complete analysis
+---
 
-Generate a fresh synthetic dataset:
+## 🔬 Investigation Pipeline
+
+The platform follows a structured investigation workflow:
+
+```text
+                 ┌──────────────────┐
+                 │  Upload Dataset  │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                ┌────────────────────┐
+                │ Data Validation &  │
+                │   Normalization    │
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌────────────────────┐
+                │ Behavioral /      │
+                │ Statistical        │
+                │ Analysis           │
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌────────────────────┐
+                │ Clustering &       │
+                │ Anomaly Detection  │
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌────────────────────┐
+                │ Neo4j Graph        │
+                │ Construction       │
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌────────────────────┐
+                │ Interactive Graph  │
+                │ Investigation      │
+                └─────────┬──────────┘
+                          │
+                          ▼
+                ┌────────────────────┐
+                │ Investigative      │
+                │ Leads & Alerts     │
+                └────────────────────┘
+```
+
+---
+
+## 🕸️ Graph-Based Investigation
+
+One of the core components of the platform is its **Neo4j-powered investigation graph**.
+
+The graph represents relationships between different entities rather than treating transactions as isolated rows.
+
+### Nodes
+
+The graph can contain:
+
+* `Wallet`
+* `Transaction`
+* `IP`
+* `ASN`
+* `Country`
+
+### Relationships
+
+Examples include:
+
+```text
+INPUT_FROM
+OUTPUT_TO
+OBSERVED_IN
+LOCATED_IN
+HAS_ASN
+```
+
+This allows investigators to explore relationships such as:
+
+```text
+Wallet
+   │
+   ├── Transaction
+   │       │
+   │       └── Wallet
+   │
+   ├── IP Address
+   │       │
+   │       └── ASN
+   │
+   └── Country
+```
+
+The frontend provides interactive graph exploration including:
+
+* Pan
+* Zoom
+* Node dragging
+* Fit-to-screen
+* Layout reset
+* Cluster-based graph exploration
+
+---
+
+## 🧩 Cluster Investigation
+
+The **Clusters** page groups related entities and provides an investigation-oriented view of each cluster.
+
+When a cluster is expanded, the platform retrieves its corresponding Neo4j neighborhood and renders it as an interactive graph.
+
+To keep visualization responsive:
+
+* Up to **200 nodes** are displayed per cluster.
+* Up to **500 relationships** are displayed per cluster.
+* Graph loading is performed lazily.
+* Stale graph requests are cancelled.
+* Graph instances are cleaned up properly.
+* Neo4j failures do not prevent the rest of the cluster interface from working.
+
+---
+
+## 🗄️ Dataset Isolation
+
+Each investigation is isolated using a unique `dataset_id`.
+
+When a new dataset is uploaded:
+
+```text
+Dataset A
+   ↓
+Existing investigation data
+   ↓
+Upload Dataset B
+   ↓
+Dataset A graph data removed
+   ↓
+Dataset B analyzed
+   ↓
+Dataset B persisted to Neo4j
+```
+
+This prevents records from different investigations from accidentally appearing in the same graph.
+
+### Reset behavior
+
+| Action             | Reset Neo4j Investigation Data? |
+| ------------------ | ------------------------------- |
+| Upload new dataset | ✅ Yes                           |
+| Browser refresh    | ❌ No                            |
+| Open Clusters      | ❌ No                            |
+| Fetch statistics   | ❌ No                            |
+| Fetch alerts       | ❌ No                            |
+| Fetch graph        | ❌ No                            |
+
+The deletion is **dataset-aware**, meaning only records associated with the relevant investigation are removed.
+
+---
+
+## 📊 Data Quality & Validation
+
+Generated datasets are validated before being written to disk.
+
+Validation includes:
+
+* Required field validation
+* Unique transaction IDs
+* Valid timestamps
+* Valid IPv4 addresses
+* Valid port ranges
+* Non-negative transaction amounts
+* Non-negative fees
+* Input/output consistency
+* Valid behavioral profiles
+
+---
+
+## ⚙️ Technology Stack
+
+| Layer               | Technology       |
+| ------------------- | ---------------- |
+| Frontend            | React            |
+| Backend             | Python + FastAPI |
+| Graph Database      | Neo4j            |
+| Graph Visualization | Cytoscape.js     |
+| Package Management  | `uv`             |
+| Data Formats        | CSV / JSON / XML |
+| Testing             | Pytest           |
+
+---
+
+## 📁 Project Structure
+
+```text
+sih/
+│
+├── backend/                         # FastAPI backend
+│
+├── frontend/                        # Frontend application
+│
+├── data/
+│   ├── synthetic/                   # Generated datasets
+│   └── processed/                   # Analysis output
+│
+├── docs/                            # Documentation
+│
+├── scripts/
+│   ├── generate_dataset.py          # Synthetic dataset generator
+│   └── run_analysis.py              # Complete analysis pipeline
+│
+├── src/
+│   └── bitcoin_investigation_platform/
+│                                    # Core analysis modules
+│
+├── tests/                           # Automated tests
+│
+├── demo.sh                          # Demo helper
+├── pyproject.toml                   # Project configuration
+├── uv.lock                          # Dependency lockfile
+└── README.md
+```
+
+---
+
+# 🚀 Getting Started
+
+## Prerequisites
+
+Make sure the following are installed:
+
+* Linux
+* Python 3.11+
+* `uv`
+* Neo4j
+* Node.js / npm
+
+---
+
+## 1. Clone the Repository
+
+```bash
+git clone https://github.com/linuxkalihydra-creator/sih.git
+cd sih
+```
+
+---
+
+## 2. Install Python Dependencies
+
+```bash
+uv sync
+```
+
+---
+
+## 3. Generate Synthetic Data
 
 ```bash
 uv run python scripts/generate_dataset.py --records 10000
 ```
 
-Run the complete offline analysis pipeline:
+---
+
+## 4. Run the Analysis Pipeline
 
 ```bash
-uv run python scripts/run_analysis.py --input data/synthetic/transactions.csv --output-dir data/processed
+uv run python scripts/run_analysis.py \
+  --input data/synthetic/transactions.csv \
+  --output-dir data/processed
 ```
 
-Run the full test suite:
+---
+
+## 5. Start the Backend
+
+```bash
+uv run python -m uvicorn backend.api.main:app \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --reload
+```
+
+The backend will be available at:
+
+```text
+http://127.0.0.1:8000
+```
+
+---
+
+## 6. Start the Frontend
+
+From the frontend directory:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Then open the development URL shown by Vite.
+
+---
+
+# 🧪 Testing
+
+Run the complete test suite:
 
 ```bash
 uv run pytest -q
 ```
 
-## Run the FastAPI service
+---
 
-```bash
-uv run python -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8000 --reload
-```
+# 🔄 Typical Usage
 
-## Graph Visualization
+### Step 1 — Upload
 
-The application includes a **Graph Visualization feature** within the Clusters page. When analyzing a dataset:
+Upload a CSV, JSON, or XML transaction dataset.
 
-1. Navigate to **Clusters** after analysis completes
-2. Click a cluster card to expand it
-3. The **Graph** section displays a real-time Neo4j visualization showing:
-   - **Nodes**: Wallets, Transactions, IP addresses, ASNs, and Countries (real entities from Neo4j)
-   - **Edges**: Relationships like INPUT_FROM, OUTPUT_TO, OBSERVED_IN, LOCATED_IN, HAS_ASN
-   - **Node Types**: Color-coded by entity type for easy visual identification
-   - **Interactions**: Pan, zoom, drag nodes, fit-to-screen, and reset layout
+### Step 2 — Analyze
 
-### Graph Performance
+Start the investigation pipeline.
 
-The graph is optimized for performance:
-- Maximum 200 nodes displayed per cluster
-- Maximum 500 edges displayed per cluster
-- Stale requests are cancelled when cluster changes
-- Graph is destroyed during cleanup to prevent memory leaks
-- Graph only loads when cluster is expanded (lazy loading)
+### Step 3 — Inspect Statistics
 
-### Graph Failure Handling
+Review transaction and behavioral statistics.
 
-If Neo4j is unavailable, the application gracefully shows:
-- "Graph data unavailable" message with a Retry button
-- Clusters list remains fully functional
-- Alerts and statistics work independently
+### Step 4 — Investigate Alerts
 
-## Neo4j Investigation Isolation
+Inspect suspicious or unusual behavioral patterns.
 
-The application ensures **strict investigation isolation** through automatic Neo4j data reset:
+### Step 5 — Explore Clusters
 
-### Reset Behavior
+Open a cluster to inspect related entities.
 
-When a **new dataset is uploaded**:
-1. Previous investigation graph data is cleared from Neo4j
-2. New dataset analysis runs
-3. New graph data persists to Neo4j
-4. No mixing of Dataset A and Dataset B records
+### Step 6 — Investigate the Graph
 
-### When Reset Occurs
-
-Neo4j data is reset **only** when starting a genuinely new investigation:
-- ✅ Uploading a new dataset triggers reset
-- ❌ Browser refresh does NOT reset (restores same dataset)
-- ❌ Opening Clusters does NOT reset
-- ❌ Fetching stats/alerts/graph does NOT reset
-- ❌ Refreshing page does NOT reset (previous dataset remains active)
-
-### Dataset-Aware Deletion
-
-The reset is dataset-aware:
-- Only removes nodes tagged with the current `dataset_id`
-- Leaves Neo4j running (never restarts the service)
-- Safe if database contains multiple datasets
-- Fast operation (targeted deletion, not full database clear)
-
-## Workflow
-
-### Upload a Dataset
-
-```
-User
-  ↓
-[Upload Dataset]
-  ↓
-FormData POST /datasets/upload
-  ↓
-Backend creates dataset entry
-  ↓
-Returns dataset_id
-```
-
-### Analyze and Persist to Neo4j
-
-```
-POST /analyze with dataset_id
-  ↓
-Existing pipeline runs
-  ↓
-Neo4j previous data cleared (dataset-aware reset)
-  ↓
-New investigation graph persisted to Neo4j
-  ↓
-Dashboard displays real data
-```
-
-### View Graph in Clusters
-
-```
-Clusters page
-  ↓
-Click cluster card to expand
-  ↓
-Graph section loads
-  ↓
-Fetches real Neo4j neighborhood
-  ↓
-Cytoscape renders interactive visualization
-```
-
-### Upload Another Dataset
-
-```
-Dataset A active
-  ↓
-[Upload Dataset B]
-  ↓
-Dataset A cleared from Neo4j
-  ↓
-Dataset B analyzed and persisted
-  ↓
-Graph shows only Dataset B
-```
-
-## Project layout
+Explore relationships between:
 
 ```text
-backend/
-data/
-docs/
-frontend/
-models/
-scripts/
-src/
-tests/
+Wallets ↔ Transactions ↔ IPs ↔ ASNs ↔ Countries
 ```
+
+### Step 7 — Generate Investigative Leads
+
+Use the resulting patterns and relationships as explainable leads for further analysis.
+
+---
+
+# 🔐 Offline & Privacy-First Design
+
+This prototype is intentionally designed for **offline experimentation**.
+
+It does not require:
+
+* Real Bitcoin network access
+* Real criminal datasets
+* Live blockchain monitoring
+* External transaction intelligence services
+
+This makes the platform suitable for:
+
+* Development
+* Demonstrations
+* Academic research
+* SIH prototyping
+* Algorithm experimentation
+* Controlled investigation simulations
+
+---
+
+# ⚠️ Disclaimer
+
+This project is a research and educational prototype.
+
+All transaction records generated by the included dataset generator are **synthetic** and do not represent real Bitcoin transactions, real wallets, real IP addresses, or real criminal activity.
+
+The behavioral categories are synthetic testing profiles and should **not** be interpreted as evidence of criminal behavior.
+
+---
+
+# 🛣️ Roadmap
+
+### Current
+
+* [x] Synthetic transaction generation
+* [x] CSV / JSON / XML support
+* [x] Data validation
+* [x] Offline analysis pipeline
+* [x] Behavioral profiling
+* [x] Clustering
+* [x] FastAPI backend
+* [x] Neo4j graph persistence
+* [x] Interactive graph visualization
+* [x] Dataset-aware investigation isolation
+* [x] Cluster investigation interface
+
+### Future
+
+* [ ] Advanced anomaly detection
+* [ ] Explainable risk scoring
+* [ ] Improved graph-based clustering
+* [ ] Temporal transaction analysis
+* [ ] Investigation case management
+* [ ] Evidence and report generation
+* [ ] More sophisticated entity correlation
+* [ ] Multi-chain investigation support
+* [ ] Production-scale graph optimization
+
+---
+
+# 🤝 Contributing
+
+Contributions, ideas, bug reports, and improvements are welcome.
+
+A typical contribution workflow:
+
+```bash
+git checkout -b feature/your-feature
+```
+
+Make your changes, run the tests:
+
+```bash
+uv run pytest -q
+```
+
+Then commit and push:
+
+```bash
+git add .
+git commit -m "feat: add your feature"
+git push origin feature/your-feature
+```
+
+Open a Pull Request describing:
+
+* What changed
+* Why it was needed
+* How it was tested
+
+---
+
+# 📜 License
+
+This project is distributed under the terms of the license included in this repository.
+
+---
+
+## ⭐ Why This Project?
+
+Bitcoin transactions are transparent, but **transparency does not automatically mean simplicity**.
+
+The Bitcoin Investigation Platform aims to turn large, disconnected transaction datasets into an **interactive investigation environment** where analysts can move from raw data to behavioral patterns, clusters, relationships, and explainable investigative leads.
+
+> **From transaction data → to connected intelligence.** 🔎
