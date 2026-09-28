@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -51,10 +52,20 @@ def _dataset_snapshot(dataset_id: str) -> dict[str, Any]:
     return snapshot
 
 
+def _anomaly_confidences(snapshot: dict[str, Any]) -> dict[str, float]:
+    """Model confidence per wallet: the percentile of its Isolation Forest anomaly_score_norm in the dataset."""
+    rows = snapshot.get("anomaly_results", [])
+    if not rows:
+        return {}
+    scores = pd.Series({str(row["wallet_id"]): float(row.get("anomaly_score_norm", 0.0)) for row in rows})
+    return scores.rank(pct=True).round(3).to_dict()
+
+
 def _alerts_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     cluster_ids = {str(row["wallet_id"]): row.get("cluster_id") for row in snapshot.get("cluster_results", [])}
     risks = sorted(snapshot.get("wallet_risk_scores", []), key=lambda row: row.get("risk_score", 0), reverse=True)[:20]
     explanation_rows = {str(row.get("wallet_id")): row for row in snapshot.get("explanations", [])}
+    confidences = _anomaly_confidences(snapshot)
     alerts = []
     for row in risks:
         wallet_id = str(row["wallet_id"])
@@ -64,8 +75,17 @@ def _alerts_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             "risk_score": float(row["risk_score"]),
             "risk_level": str(row["risk_level"]),
             "cluster_id": cluster_ids.get(wallet_id),
-            "confidence": round(float(max(0.5, min(0.99, float(row["risk_score"]) / 100))), 3),
-            "top_reasons": [str(reason["label"]) for reason in reasons if reason.get("label")],
+            "confidence": float(confidences.get(wallet_id, 0.0)),
+            "top_reasons": [
+                {
+                    "label": str(reason["label"]),
+                    "confidence": float(reason.get("confidence", 0.0)),
+                    "evidence": str(reason.get("evidence", "")),
+                    "investigative_lead": str(reason.get("investigative_lead", "")),
+                }
+                for reason in reasons
+                if reason.get("label")
+            ],
         })
     return alerts
 
@@ -95,7 +115,7 @@ def _snapshot_entity(snapshot: dict[str, Any], wallet_id: str) -> dict[str, Any]
         "wallet_id": wallet_id,
         "risk_score": risk_score,
         "risk_level": str(risk_row.get("risk_level", "LOW")),
-        "confidence": round(float(max(0.5, min(0.99, risk_score / 100))), 3),
+        "confidence": float(_anomaly_confidences(snapshot).get(wallet_id, 0.0)),
         "cluster_id": cluster_id,
         "transaction_statistics": {
             "transaction_count": int(feature_row.get("transaction_count", 0)),

@@ -21,7 +21,7 @@ export const DataTypes = {
     risk_level: String, // LOW, MEDIUM, HIGH, CRITICAL
     confidence: Number,
     cluster_id: Number,
-    top_reasons: [String],
+    top_reasons: [{ label: String, confidence: Number, evidence: String, investigative_lead: String }],
   },
 
   // Entity details

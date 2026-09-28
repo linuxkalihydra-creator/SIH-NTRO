@@ -169,7 +169,11 @@ export default function Alerts() {
                 </td>
                 <td className="confidence">{(alert.confidence * 100).toFixed(0)}%</td>
                 <td className="cluster">{alert.cluster_id ?? 'N/A'}</td>
-                <td className="reason">{alert.top_reasons?.[0] || 'N/A'}</td>
+                <td className="reason">
+                  {alert.top_reasons?.[0]
+                    ? `${alert.top_reasons[0].label} (${(alert.top_reasons[0].confidence * 100).toFixed(0)}%)`
+                    : 'N/A'}
+                </td>
                 <td>
                   <button
                     className="investigate-btn"

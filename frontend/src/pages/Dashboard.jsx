@@ -339,7 +339,7 @@ export default function Dashboard() {
                     {alert.top_reasons.length > 0 && (
                       <>
                         <strong>Top Reason:</strong>
-                        <p>{alert.top_reasons[0]}</p>
+                        <p>{alert.top_reasons[0].label} ({(alert.top_reasons[0].confidence * 100).toFixed(0)}% confidence)</p>
                       </>
                     )}
                   </div>
