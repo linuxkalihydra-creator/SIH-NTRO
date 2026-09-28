@@ -244,38 +244,38 @@ To keep visualization responsive:
 
 ## 🗄️ Dataset Isolation
 
-Each investigation is isolated using a unique `dataset_id`.
+Each investigation is isolated by its unique `dataset_id`, not by deleting
+other datasets. Every Neo4j node is tagged with its `dataset_id`, uniqueness
+constraints are scoped per dataset (for example `(dataset_id, wallet_id)`), and
+every graph query filters on the requested `dataset_id`. Records from different
+investigations therefore never appear in the same graph, even though they share
+one Neo4j database.
 
-When a new dataset is uploaded:
+When a dataset is analyzed:
 
 ```text
-Dataset A
+POST /analyze (dataset_id = B)
    ↓
-Existing investigation data
+Delete existing Neo4j nodes tagged dataset_id = B (re-analysis of B only)
    ↓
-Upload Dataset B
-   ↓
-Dataset A graph data removed
-   ↓
-Dataset B analyzed
-   ↓
-Dataset B persisted to Neo4j
+Persist B's graph, tagged dataset_id = B
 ```
 
-This prevents records from different investigations from accidentally appearing in the same graph.
+Uploading dataset B does **not** remove dataset A's graph. A stays in Neo4j,
+and in the local dataset registry, so its analysis and graph can still be
+opened. Graph data therefore **accumulates** across uploads. To reclaim space,
+delete a dataset's nodes explicitly, e.g.
+`MATCH (n {dataset_id: $dataset_id}) DETACH DELETE n`.
 
 ### Reset behavior
 
-| Action             | Reset Neo4j Investigation Data? |
-| ------------------ | ------------------------------- |
-| Upload new dataset | ✅ Yes                           |
-| Browser refresh    | ❌ No                            |
-| Open Clusters      | ❌ No                            |
-| Fetch statistics   | ❌ No                            |
-| Fetch alerts       | ❌ No                            |
-| Fetch graph        | ❌ No                            |
-
-The deletion is **dataset-aware**, meaning only records associated with the relevant investigation are removed.
+| Action                         | Deletes Neo4j graph data?              |
+| ------------------------------ | -------------------------------------- |
+| Upload a new dataset           | ❌ No (other datasets are kept)         |
+| Analyze / re-analyze dataset X | ✅ Only dataset X's own nodes, replaced |
+| Browser refresh                | ❌ No                                   |
+| Open Clusters / fetch graph    | ❌ No                                   |
+| Fetch statistics or alerts     | ❌ No                                   |
 
 ---
 
@@ -548,7 +548,7 @@ The behavioral categories are synthetic testing profiles and should **not** be i
 * [x] FastAPI backend
 * [x] Neo4j graph persistence
 * [x] Interactive graph visualization
-* [x] Dataset-aware investigation isolation
+* [x] Dataset-scoped investigation isolation
 * [x] Cluster investigation interface
 
 ### Future
