@@ -40,9 +40,14 @@ export function DatasetProvider({ children }) {
       setDatasets(data);
       const saved = readSavedDatasetId();
       const savedDataset = data.find((item) => item.dataset_id === saved) || null;
-      const selected = savedDataset?.analysis_status === 'completed' ? savedDataset : null;
+      const savedCompleted = savedDataset?.analysis_status === 'completed' ? savedDataset : null;
       if (saved && !data.some((item) => item.dataset_id === saved)) writeSavedDatasetId(null);
-      if (savedDataset && !selected) writeSavedDatasetId(null);
+      if (savedDataset && !savedCompleted) writeSavedDatasetId(null);
+      // With no usable saved choice (e.g. a fresh browser), open the most recently completed analysis.
+      const latestCompleted = data
+        .filter((item) => item.analysis_status === 'completed')
+        .sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')))[0] || null;
+      const selected = savedCompleted || latestCompleted;
       if (selected) {
         setSelectedDatasetId(selected.dataset_id);
       } else {
