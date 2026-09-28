@@ -69,3 +69,13 @@ def test_ml_pipeline_runs_on_wallet_features():
     assert isinstance(scored, pd.DataFrame)
     assert "risk_score" in scored.columns
     assert "risk_level" in scored.columns
+
+
+def test_clustering_standard_synthetic_dataset_finds_multiple_clusters():
+    from backend.ingestion.service import load_dataset
+
+    features = build_wallet_feature_frame(load_dataset("data/synthetic/transactions.csv"))
+    _, clusters = cluster_wallets(features)
+    non_noise = set(clusters["cluster_id"]) - {-1}
+    assert len(non_noise) > 1
+    assert clusters["cluster_id"].eq(-1).mean() < 0.5
