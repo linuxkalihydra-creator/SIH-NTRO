@@ -32,10 +32,11 @@ def compute_risk_scores(wallet_features: pd.DataFrame, anomaly_scores: pd.DataFr
         df[column] = df[column].fillna(0.0)
 
     df["ml_component"] = df["anomaly_score_norm"].fillna(0.0) * 0.45
-    df["network_component"] = ((df["unique_ips"] / max(df["unique_ips"].max(), 1)) * 100) * 0.15
-    df["transaction_component"] = ((df["transaction_count"] / max(df["transaction_count"].max(), 1)) * 100) * 0.15
+    # Percentile rank keeps one extreme wallet from compressing everyone else toward zero.
+    df["network_component"] = (df["unique_ips"].rank(pct=True) * 100) * 0.15
+    df["transaction_component"] = (df["transaction_count"].rank(pct=True) * 100) * 0.15
     df["temporal_component"] = ((1 / (1 + df["average_time_between_transactions"])) * 100) * 0.10
-    df["graph_component"] = ((df["graph_degree"] / max(df["graph_degree"].max(), 1)) * 100) * 0.15
+    df["graph_component"] = (df["graph_degree"].rank(pct=True) * 100) * 0.15
     df["risk_score"] = df["ml_component"] + df["network_component"] + df["transaction_component"] + df["temporal_component"] + df["graph_component"]
     df["risk_score"] = df["risk_score"].clip(0, 100)
 

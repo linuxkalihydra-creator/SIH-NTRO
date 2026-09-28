@@ -79,3 +79,18 @@ def test_clustering_standard_synthetic_dataset_finds_multiple_clusters():
     non_noise = set(clusters["cluster_id"]) - {-1}
     assert len(non_noise) > 1
     assert clusters["cluster_id"].eq(-1).mean() < 0.5
+
+
+def test_risk_scores_flag_more_than_one_wallet_above_low():
+    from scripts.generate_dataset import generate_dataset
+    from backend.ingestion.normalizer import normalize_records
+
+    records, _ = generate_dataset(records=2000, seed=7)
+    features = build_wallet_feature_frame(normalize_records(records))
+    _, anomalies = train_isolation_forest(features)
+    _, clusters = cluster_wallets(features)
+    scored = compute_risk_scores(features, anomalies, clusters)
+    assert scored["risk_level"].ne("LOW").sum() > 1
+    # max()-normalization let one outlier push ~99% of wallets to LOW.
+    assert scored["risk_level"].ne("LOW").mean() > 0.05
+    assert scored["risk_score"].between(0, 100).all()
