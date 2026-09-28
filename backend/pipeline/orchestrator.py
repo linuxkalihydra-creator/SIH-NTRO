@@ -54,11 +54,13 @@ class AnalysisOrchestrator:
         total_records = len(records)
         wallets = sorted({wallet for record in records for wallet in record.get("input_addresses", []) + record.get("output_addresses", [])})
         ips = sorted({record.get("src_ip") for record in records} | {record.get("dst_ip") for record in records})
-        behaviors = Counter(str(record.get("behavior_type", "UNKNOWN")) for record in records)
+        # behavior_type is an optional synthetic label; unlabeled records are not counted.
+        behaviors = Counter(str(record["behavior_type"]) for record in records if record.get("behavior_type"))
         return {
             "total_records": total_records,
             "unique_wallets": len(wallets),
             "unique_ips": len([ip for ip in ips if ip]),
+            "labels_available": bool(behaviors),
             "behavior_distribution": dict(sorted(behaviors.items())),
         }
 
@@ -82,10 +84,22 @@ class AnalysisOrchestrator:
         }
 
     def _build_evaluation_report(self, records: list[dict[str, Any]], wallet_features: pd.DataFrame, anomaly_results: pd.DataFrame, cluster_results: pd.DataFrame) -> dict[str, Any]:
-        wallet_behavior: dict[str, str] = defaultdict(str)
+        cluster_distribution = dict(sorted(cluster_results["cluster_id"].value_counts().astype(int).to_dict().items()))
+        wallet_behavior: dict[str, str] = {}
         for record in records:
+            if not record.get("behavior_type"):
+                continue
             for wallet in record.get("input_addresses", []) + record.get("output_addresses", []):
-                wallet_behavior[str(wallet)] = str(record.get("behavior_type", "UNKNOWN"))
+                wallet_behavior[str(wallet)] = str(record["behavior_type"])
+
+        # Real-world datasets carry no ground-truth label; skip label-based metrics.
+        if not wallet_behavior:
+            return {
+                "synthetic_ground_truth": False,
+                "labels_available": False,
+                "anomalous_entities": int(anomaly_results["anomaly_label"].eq(-1).sum()),
+                "cluster_distribution": cluster_distribution,
+            }
 
         merged = wallet_features.merge(anomaly_results[["wallet_id", "anomaly_label"]], on="wallet_id", how="left")
         merged = merged.merge(cluster_results[["wallet_id", "cluster_id"]], on="wallet_id", how="left")
@@ -116,11 +130,12 @@ class AnalysisOrchestrator:
 
         return {
             "synthetic_ground_truth": True,
+            "labels_available": True,
             "normal_entities": normal_entities,
             "anomalous_entities": anomalous_entities,
             "anomaly_rate_by_profile": behavior_profile_rates,
             "normal_profile_false_positive_rate": round(false_positive_rate, 4),
-            "cluster_distribution": dict(sorted(cluster_results["cluster_id"].value_counts().astype(int).to_dict().items())),
+            "cluster_distribution": cluster_distribution,
         }
 
     def _write_outputs(self, output_dir: Path, result: AnalysisResult) -> None:

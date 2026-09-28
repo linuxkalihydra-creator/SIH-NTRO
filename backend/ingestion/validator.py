@@ -18,11 +18,11 @@ REQUIRED_FIELDS = (
     "input_amounts",
     "output_amounts",
     "fee",
-    "script_type",
-    "geo_country",
-    "asn",
-    "behavior_type",
 )
+
+# Optional fields: geo_country/asn come from offline enrichment, script_type is
+# informational, and behavior_type is a synthetic evaluation label only.
+OPTIONAL_FIELDS = ("script_type", "geo_country", "asn", "behavior_type")
 
 SUPPORTED_BEHAVIORS = {
     "NORMAL",
@@ -42,7 +42,8 @@ def validate_record(record: dict[str, Any]) -> list[str]:
         if field not in record or record[field] in (None, ""):
             errors.append(f"Missing required field: {field}")
 
-    if record.get("behavior_type") not in SUPPORTED_BEHAVIORS:
+    behavior = record.get("behavior_type")
+    if behavior not in (None, "") and behavior not in SUPPORTED_BEHAVIORS:
         errors.append("Unsupported behavior_type")
 
     for ip_key in ("src_ip", "dst_ip"):

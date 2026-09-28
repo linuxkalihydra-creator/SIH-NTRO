@@ -21,7 +21,7 @@ def build_transaction_graph(records: list[dict[str, Any]]) -> list[dict[str, Any
         if txid:
             graph_nodes.append({"type": "Transaction", "id": txid, "relationship": "OBSERVED_IN", "ip": src_ip})
             graph_nodes.append({"type": "IP", "id": src_ip, "relationship": "OBSERVED_IN", "txid": txid})
-            if asn is not None:
+            if asn:
                 graph_nodes.append({"type": "ASN", "id": str(asn), "relationship": "IP_BELONGS_TO_ASN", "ip": src_ip, "txid": txid})
             if country:
                 graph_nodes.append({"type": "Country", "id": str(country), "relationship": "IP_COUNTRY", "ip": src_ip, "txid": txid})
@@ -31,7 +31,7 @@ def build_transaction_graph(records: list[dict[str, Any]]) -> list[dict[str, Any
             graph_nodes.append({"type": "Wallet", "id": wallet_id, "relationship": "INPUT_FROM", "txid": txid})
             if country:
                 graph_nodes.append({"type": "Country", "id": str(country), "relationship": "LOCATED_IN", "wallet": wallet_id})
-            if asn is not None:
+            if asn:
                 graph_nodes.append({"type": "ASN", "id": str(asn), "relationship": "HAS_ASN", "wallet": wallet_id})
 
         for wallet in record.get("output_addresses", []):
@@ -39,7 +39,7 @@ def build_transaction_graph(records: list[dict[str, Any]]) -> list[dict[str, Any
             graph_nodes.append({"type": "Wallet", "id": wallet_id, "relationship": "OUTPUT_TO", "txid": txid})
             if country:
                 graph_nodes.append({"type": "Country", "id": str(country), "relationship": "LOCATED_IN", "wallet": wallet_id})
-            if asn is not None:
+            if asn:
                 graph_nodes.append({"type": "ASN", "id": str(asn), "relationship": "HAS_ASN", "wallet": wallet_id})
 
     return graph_nodes

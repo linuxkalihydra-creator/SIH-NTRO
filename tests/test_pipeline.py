@@ -81,3 +81,13 @@ def test_pipeline_deterministic_with_seed(synthetic_csv_path: Path):
     pd.testing.assert_frame_equal(result_a.risk_scores, result_b.risk_scores)
     assert result_a.anomaly_results.equals(result_b.anomaly_results)
     assert result_a.cluster_results.equals(result_b.cluster_results)
+
+
+def test_pipeline_runs_on_unlabeled_dataset_and_skips_label_metrics(minimal_csv_path, tmp_path):
+    result = AnalysisOrchestrator().run(str(minimal_csv_path), output_dir=str(tmp_path / "out"), random_state=42)
+    assert result.dataset_statistics["total_records"] == 300
+    assert result.dataset_statistics["labels_available"] is False
+    assert result.dataset_statistics["behavior_distribution"] == {}
+    assert result.evaluation["labels_available"] is False
+    assert "anomaly_rate_by_profile" not in result.evaluation
+    assert not result.risk_scores.empty
