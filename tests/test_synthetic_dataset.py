@@ -76,3 +76,13 @@ def test_generated_files_exist_and_counts_match(tmp_path):
     tree = ET.parse(xml_path)
     root = tree.getroot()
     assert len(root.findall("transaction")) == len(records)
+
+
+def test_generated_ips_are_public_and_geoip_resolvable():
+    from ipaddress import IPv4Address
+
+    records, _ = generate_dataset(records=500, seed=3)
+    ips = {IPv4Address(record[key]) for record in records for key in ("src_ip", "dst_ip")}
+    assert ips
+    for ip in ips:
+        assert ip.is_global and not (ip.is_private or ip.is_reserved or ip.is_multicast or ip.is_loopback)

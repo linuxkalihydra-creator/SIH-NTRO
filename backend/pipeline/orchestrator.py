@@ -31,9 +31,12 @@ logger = logging.getLogger(__name__)
 class AnalysisOrchestrator:
     """Coordinate ingestion, enrichment, correlation, ML, risk, and explanations."""
 
-    def __init__(self, contamination: float = DEFAULT_CONTAMINATION, random_state: int = DEFAULT_RANDOM_STATE) -> None:
+    def __init__(self, contamination: float = DEFAULT_CONTAMINATION, random_state: int = DEFAULT_RANDOM_STATE, geoip_db_path: str | Path | None = None, asn_db_path: str | Path | None = None) -> None:
         self.contamination = contamination
         self.random_state = random_state
+        # None resolves to $GEOIP_COUNTRY_DB / $GEOIP_ASN_DB, then data/geoip/GeoLite2-*.mmdb.
+        self.geoip_db_path = geoip_db_path
+        self.asn_db_path = asn_db_path
 
     def _graph_status(self, graph_records: list[dict[str, Any]] | None = None) -> tuple[bool, str]:
         client = Neo4jClient()
@@ -62,6 +65,8 @@ class AnalysisOrchestrator:
             "unique_ips": len([ip for ip in ips if ip]),
             "labels_available": bool(behaviors),
             "behavior_distribution": dict(sorted(behaviors.items())),
+            "geo_country_sources": dict(sorted(Counter(str(record.get("geo_country_source", "unresolved")) for record in records).items())),
+            "asn_sources": dict(sorted(Counter(str(record.get("asn_source", "unresolved")) for record in records).items())),
         }
 
     def _build_correlation_statistics(self, correlation_index: dict[str, Any]) -> dict[str, Any]:
@@ -188,7 +193,7 @@ class AnalysisOrchestrator:
             raise ValueError("No valid records remain after validation.")
 
         logger.info("[3/9] Normalizing records...")
-        enriched_records = enrich_records(records)
+        enriched_records = enrich_records(records, geoip_db_path=self.geoip_db_path, asn_db_path=self.asn_db_path)
         logger.info("[4/9] Building correlations...")
         correlation_index = build_correlation_index(enriched_records)
         logger.info("[5/9] Building graph...")

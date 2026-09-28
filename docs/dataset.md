@@ -66,7 +66,7 @@ A wallet associated with several IPs, ASNs, and countries, producing unusually h
 
 ## Data generation notes
 
-- IP addresses are produced using documentation/test ranges, such as RFC 5737 ranges.
+- IP addresses are drawn from a fixed, deterministic pool of 12 public /24 networks. Documentation (RFC 5737), private, CGNAT, multicast and reserved blocks are excluded because they can never resolve in a real GeoIP database. The addresses are synthetic: they do not describe the real hosts at those addresses.
 - Wallet addresses are Bitcoin-like strings but are synthetic, not real wallet identifiers.
 - The transaction amounts are designed to be plausible and internally consistent.
 - `fee` is approximated by sum(input amounts) - sum(output amounts), and is constrained to be non-negative.

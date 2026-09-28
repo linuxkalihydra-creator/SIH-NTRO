@@ -5,29 +5,32 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from backend.enrichment.asn import resolve_asn_fallback
-from backend.enrichment.geoip import resolve_country_fallback
+from backend.enrichment.asn import ASNAdapter, asn_db_path as configured_asn_db_path
+from backend.enrichment.geoip import GeoIPAdapter, country_db_path as configured_country_db_path
 
 
 def enrich_record(record: dict[str, Any], geoip_db_path: str | Path | None = None, asn_db_path: str | Path | None = None) -> dict[str, Any]:
     """Apply offline enrichment while preserving the synthetic dataset fallback behavior."""
-    enriched = dict(record)
-    enriched = resolve_country_fallback(enriched, geoip_db_path)
-    enriched = resolve_asn_fallback(enriched, asn_db_path)
-    return enriched
+    return enrich_records([record], geoip_db_path, asn_db_path)[0]
 
 
 def enrich_records(records: list[dict[str, Any]], geoip_db_path: str | Path | None = None, asn_db_path: str | Path | None = None) -> list[dict[str, Any]]:
-    """Enrich a list of records in place with offline GeoIP/ASN metadata."""
-    return [enrich_record(record, geoip_db_path, asn_db_path) for record in records]
+    """Enrich records with offline GeoIP/ASN metadata, opening each database once."""
+    geoip = GeoIPAdapter(geoip_db_path)
+    asn = ASNAdapter(asn_db_path)
+    try:
+        return [asn.enrich_record(geoip.enrich_record(record)) for record in records]
+    finally:
+        geoip.close()
+        asn.close()
 
 
 def get_offline_db_locations() -> dict[str, str]:
-    """Return the expected local GeoIP/ASN database locations for this project."""
+    """Return the configured local GeoIP/ASN database locations for this project."""
     return {
-        "geoip": "data/geoip/local_geoip.json",
-        "asn": "data/geoip/local_asn.json",
-        "note": "These local files are optional. The synthetic dataset already contains geo_country and asn fields.",
+        "geoip": str(configured_country_db_path()),
+        "asn": str(configured_asn_db_path()),
+        "note": "Download GeoLite2-Country/ASN .mmdb files once before running offline; without them the dataset's own geo_country/asn fields are used.",
     }
 
 

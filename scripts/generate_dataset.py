@@ -54,11 +54,30 @@ COUNTRIES = [
 ]
 
 SCRIPT_TYPES = ["P2PKH", "P2SH_P2WPKH", "P2WPKH", "P2TR"]
-NETWORK_RANGES = [
-    IPv4Network("192.0.2.0/24"),
-    IPv4Network("198.51.100.0/24"),
-    IPv4Network("203.0.113.0/24"),
-]
+
+
+def _is_public_network(network: IPv4Network) -> bool:
+    """True for globally routable unicast space that a real GeoIP database can resolve."""
+    return network.is_global and not (network.is_multicast or network.is_reserved or network.is_private or network.is_loopback or network.is_link_local)
+
+
+def _public_networks(count: int = 12, seed: int = 8333) -> list[IPv4Network]:
+    """Pick a fixed, deterministic set of public /24 networks.
+
+    Documentation (RFC 5737), private, CGNAT, multicast and reserved blocks are
+    excluded because they can never resolve in a real GeoIP database. A small
+    fixed pool keeps realistic IP reuse between wallets.
+    """
+    picker = random.Random(seed)
+    networks: list[IPv4Network] = []
+    while len(networks) < count:
+        network = IPv4Network((picker.getrandbits(24) << 8, 24))
+        if _is_public_network(network) and network not in networks:
+            networks.append(network)
+    return networks
+
+
+NETWORK_RANGES = _public_networks()
 
 BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -81,7 +100,7 @@ def make_txid(rng: random.Random) -> str:
 
 
 def make_ip(rng: random.Random) -> str:
-    """Generate an IPv4 address in documentation/test ranges to keep it realistic."""
+    """Generate a public IPv4 address from the fixed synthetic network pool."""
     network = rng.choice(NETWORK_RANGES)
     host = rng.randint(1, network.num_addresses - 2)
     return str(IPv4Address(int(network.network_address) + host))
@@ -481,9 +500,12 @@ def validate_record(record: dict[str, Any]) -> list[str]:
 
     for ip_field in ["src_ip", "dst_ip"]:
         try:
-            IPv4Address(record.get(ip_field))
+            address = IPv4Address(record.get(ip_field))
         except (ValueError, TypeError):
             errors.append(f"Invalid IPv4 in {ip_field}")
+            continue
+        if not _is_public_network(IPv4Network(f"{address}/32")):
+            errors.append(f"Non-public IPv4 in {ip_field}")
 
     for port_field in ["src_port", "dst_port"]:
         port = record.get(port_field)

@@ -18,3 +18,6 @@ wheels/
 
 # VS Code
 .vscode/
+
+# Local GeoLite2 databases (MaxMind license: do not commit)
+data/geoip/*.mmdb
