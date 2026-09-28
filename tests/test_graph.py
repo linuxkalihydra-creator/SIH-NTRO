@@ -48,3 +48,43 @@ def test_orchestrator_requires_real_persistence_before_graph_available(monkeypat
 
     assert status is True
     assert "persistence" in message.lower()
+
+
+def test_persist_graph_writes_output_to_edges_in_neo4j():
+    import uuid
+
+    import pytest
+
+    from backend.graph.neo4j_client import Neo4jClient, Neo4jUnavailableError
+
+    client = Neo4jClient()
+    try:
+        client.connect()
+    except Neo4jUnavailableError:
+        pytest.skip("Neo4j is not reachable")
+
+    dataset_id = f"test_output_to_{uuid.uuid4().hex}"
+    records = [
+        {"timestamp": "2024-01-01T00:00:00+00:00", "src_ip": "203.0.113.10", "dst_ip": "198.51.100.10", "txid": "tx_1",
+         "input_addresses": ["wallet_a"], "output_addresses": ["wallet_b", "wallet_c"], "input_amounts": [1.0], "output_amounts": [0.5, 0.49],
+         "geo_country": "US", "asn": 64512},
+        {"timestamp": "2024-01-01T00:05:00+00:00", "src_ip": "203.0.113.11", "dst_ip": "198.51.100.11", "txid": "tx_2",
+         "input_addresses": ["wallet_b"], "output_addresses": ["wallet_d"], "input_amounts": [0.5], "output_amounts": [0.49],
+         "geo_country": "US", "asn": 64512},
+    ]
+    try:
+        client.persist_graph(build_transaction_graph(records), dataset_id=dataset_id)
+        with client._driver.session() as session:
+            output_edges = session.run(
+                "MATCH (t:Transaction {dataset_id: $d})-[:OUTPUT_TO]->(w:Wallet {dataset_id: $d}) RETURN t.txid AS txid, w.wallet_id AS wallet",
+                d=dataset_id,
+            ).data()
+            input_edges = session.run(
+                "MATCH (:Wallet {dataset_id: $d})-[r:INPUT_FROM]->(:Transaction {dataset_id: $d}) RETURN count(r) AS n", d=dataset_id,
+            ).single()["n"]
+        assert len(output_edges) > 0
+        assert {(edge["txid"], edge["wallet"]) for edge in output_edges} == {("tx_1", "wallet_b"), ("tx_1", "wallet_c"), ("tx_2", "wallet_d")}
+        assert input_edges == 2
+    finally:
+        client.clear_dataset_graph(dataset_id)
+        client.close()

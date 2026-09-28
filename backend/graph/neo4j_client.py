@@ -137,7 +137,11 @@ class Neo4jClient:
                 continue
 
             if node_type == "Wallet" and record.get("txid") is not None:
-                rel_rows.setdefault(relationship, []).append({"source": str(node_id), "target": str(record.get("txid"))})
+                # INPUT_FROM runs (Wallet)->(Transaction); OUTPUT_TO runs (Transaction)->(Wallet).
+                if relationship == "OUTPUT_TO":
+                    rel_rows["OUTPUT_TO"].append({"source": str(record.get("txid")), "target": str(node_id)})
+                else:
+                    rel_rows.setdefault(relationship, []).append({"source": str(node_id), "target": str(record.get("txid"))})
             elif node_type == "IP" and record.get("txid") is not None:
                 rel_rows.setdefault("OBSERVED_IN", []).append({"source": str(record.get("txid")), "target": str(node_id)})
             elif node_type == "Country" and record.get("wallet") is not None:
