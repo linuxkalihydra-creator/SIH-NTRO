@@ -56,26 +56,28 @@ def build_wallet_feature_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
         input_amounts = [float(amount) for amount in record.get("input_amounts", [])]
         output_amounts = [float(amount) for amount in record.get("output_amounts", [])]
 
+        # A wallet in input_addresses spends funds (outgoing, observed at src_ip).
         for wallet in input_wallets:
             stats = wallet_data[wallet]
             stats["transaction_count"] += 1
-            stats["incoming_transaction_count"] += 1
-            stats["graph_in_degree"] += 1
-            stats["incoming_amounts"].extend(input_amounts)
-            stats["total_received"] += sum(input_amounts)
+            stats["outgoing_transaction_count"] += 1
+            stats["graph_out_degree"] += 1
+            stats["outgoing_amounts"].extend(input_amounts)
+            stats["total_sent"] += sum(input_amounts)
             stats["unique_ips"].add(str(record.get("src_ip", "")))
             stats["unique_asns"].add(int(record.get("asn", 0) or 0))
             stats["unique_countries"].add(str(record.get("geo_country", "")))
             stats["timestamps"].append(datetime.fromisoformat(str(record.get("timestamp"))))
             stats["graph_degree"] += 1
 
+        # A wallet in output_addresses receives funds (incoming, observed at dst_ip).
         for wallet in output_wallets:
             stats = wallet_data[wallet]
             stats["transaction_count"] += 1
-            stats["outgoing_transaction_count"] += 1
-            stats["graph_out_degree"] += 1
-            stats["outgoing_amounts"].extend(output_amounts)
-            stats["total_sent"] += sum(output_amounts)
+            stats["incoming_transaction_count"] += 1
+            stats["graph_in_degree"] += 1
+            stats["incoming_amounts"].extend(output_amounts)
+            stats["total_received"] += sum(output_amounts)
             stats["unique_ips"].add(str(record.get("dst_ip", "")))
             stats["unique_asns"].add(int(record.get("asn", 0) or 0))
             stats["unique_countries"].add(str(record.get("geo_country", "")))
@@ -83,8 +85,7 @@ def build_wallet_feature_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
             stats["graph_degree"] += 1
 
         for wallet in all_wallets:
-            stats = wallet_data[wallet]
-            stats["unique_counterparties"].update(wallet for wallet in all_wallets if wallet != str(wallet))
+            wallet_data[wallet]["unique_counterparties"].update(other for other in all_wallets if other != wallet)
 
     rows: list[dict[str, Any]] = []
     for wallet_id, stats in wallet_data.items():
@@ -102,6 +103,13 @@ def build_wallet_feature_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
         gaps = []
         for previous, current in zip(timestamps, timestamps[1:]):
             gaps.append((current - previous).total_seconds())
+        # Activity rate over the wallet's observed time span: (n - 1) intervals per hour.
+        # The span is floored at one minute so simultaneous transactions stay finite.
+        if len(timestamps) > 1:
+            span_hours = max((timestamps[-1] - timestamps[0]).total_seconds(), 60.0) / 3600
+            transactions_per_hour = (len(timestamps) - 1) / span_hours
+        else:
+            transactions_per_hour = 0.0
 
         rows.append({
             "wallet_id": wallet_id,
@@ -118,8 +126,8 @@ def build_wallet_feature_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
             "unique_ips": len(stats["unique_ips"]),
             "unique_asns": len(stats["unique_asns"]),
             "unique_countries": len(stats["unique_countries"]),
-            "transactions_per_hour": round((stats["transaction_count"] / max(len(timestamps), 1)) * 60, 8) if timestamps else 0.0,
-            "transactions_per_day": round(stats["transaction_count"] / max(len(timestamps), 1), 8) if timestamps else 0.0,
+            "transactions_per_hour": round(transactions_per_hour, 8),
+            "transactions_per_day": round(transactions_per_hour * 24, 8),
             "average_time_between_transactions": round(sum(gaps) / len(gaps), 8) if gaps else 0.0,
             "minimum_time_between_transactions": round(min(gaps, default=0.0), 8),
             "fan_in_ratio": round(incoming_total / max(outgoing_total, 1e-9), 8) if incoming_total > 0 else 0.0,
