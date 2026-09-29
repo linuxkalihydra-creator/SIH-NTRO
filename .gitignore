@@ -1,23 +1,47 @@
-# Python-generated files
+# Python caches and build output
 __pycache__/
-**/__pycache__/
-*.py[oc]
-*.pyc
+*.py[cod]
+*.egg-info/
 build/
 dist/
 wheels/
-*.egg-info
+
+# Test and lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # Virtual environments
 .venv/
-.venv
 
-# Test and environment files
-.pytest_cache/
+# Node dependencies, frontend build output and logs
+node_modules/
+dist-ssr/
+*.log
+
+# Environment files: commit only the .env.example templates
 .env
+.env.*
+!.env.example
 
-# VS Code
-.vscode/
+# Runtime data written by the app and pipeline (uploads, snapshots, analysis output)
+data/raw/uploads/
+data/processed/
 
 # Local GeoLite2 databases (MaxMind license: do not commit)
 data/geoip/*.mmdb
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local AI coding-agent state and worktrees
+.kilo/
+.kilocode/
