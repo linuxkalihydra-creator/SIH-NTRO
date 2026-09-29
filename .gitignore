@@ -45,3 +45,7 @@ Thumbs.db
 # Local AI coding-agent state and worktrees
 .kilo/
 .kilocode/
+
+# Damaged copy of an old .git directory; kept on disk pending review (holds
+# agent checkpoint objects found nowhere else). Remove this entry once deleted.
+.git-corrupted/
