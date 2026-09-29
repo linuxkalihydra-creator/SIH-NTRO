@@ -250,126 +250,47 @@ class Neo4jClient:
             "availability": "local_neo4j_available" if self._driver is not None else "requires_local_neo4j",
         }
 
-    def get_neighborhood(self, dataset_id: str, wallet_id: str, depth: int = 2, max_nodes: int = 150, max_edges: int = 300) -> dict[str, Any]:
-        """Return a bounded Neo4j neighborhood without exposing driver objects."""
+    def get_wallet_flow_graph(self, dataset_id: str, wallet_id: str, depth: int = 1, max_nodes: int = 160, max_edges: int = 400) -> dict[str, Any]:
+        """Wallet neighbourhood along value flow only, nearest nodes first, plus the IPs that relayed the wallet's transactions.
+
+        ``depth`` counts transaction hops (Wallet -> Transaction -> Wallet is one hop).
+        Country/ASN nodes are never traversed: two wallets in the same country are not linked.
+        """
         if self._driver is None:
             self.connect()
-
-        depth = max(1, min(int(depth), 3))
-        max_nodes = max(1, min(int(max_nodes), 500))
-        max_edges = max(1, min(int(max_edges), 1000))
-        traversal = f"[*1..{depth}]"
-
+        hops = 2 * max(1, min(int(depth), 2))
         with self._driver.session() as session:
-            node_result = session.run(
+            node_rows = list(session.run(
                 f"""
                 MATCH (root:Wallet {{dataset_id: $dataset_id, wallet_id: $wallet_id}})
-                MATCH (root)-[*0..{depth}]-(node)
+                MATCH path = (root)-[:INPUT_FROM|OUTPUT_TO*0..{hops}]-(node)
                 WHERE node.dataset_id = $dataset_id
-                WITH DISTINCT node
+                WITH node, min(length(path)) AS distance
+                ORDER BY distance
                 LIMIT $max_nodes
-                RETURN elementId(node) AS internal_id, labels(node) AS labels, properties(node) AS properties
-                """,
-                wallet_id=str(wallet_id),
-                dataset_id=str(dataset_id),
-                max_nodes=max_nodes,
-            )
-            node_rows = list(node_result)
-            if not node_rows:
-                return {"graph_available": True, "nodes": [], "edges": [], "depth": depth}
-
-            internal_ids = [row["internal_id"] for row in node_rows]
-            edge_result = session.run(
-                """
-                MATCH (source)-[relationship]->(target)
-                WHERE elementId(source) IN $internal_ids AND elementId(target) IN $internal_ids
-                WITH relationship, source, target
-                LIMIT $max_edges
-                RETURN elementId(relationship) AS relationship_id,
-                       elementId(source) AS source_internal_id,
-                       elementId(target) AS target_internal_id,
-                       type(relationship) AS relationship_type,
-                       properties(relationship) AS relationship_properties
-                """,
-                internal_ids=internal_ids,
-                max_edges=max_edges,
-            )
-            edge_rows = list(edge_result)
-
-        def public_id(row: Any) -> str:
-            properties = dict(row["properties"] or {})
-            labels = row["labels"] or []
-            node_type = str(labels[0]) if labels else "Entity"
-            identifier = {
-                "Wallet": properties.get("wallet_id"),
-                "Transaction": properties.get("txid"),
-                "IP": properties.get("ip"),
-                "ASN": properties.get("asn"),
-                "Country": properties.get("country"),
-            }.get(node_type)
-            return str(identifier if identifier is not None else row["internal_id"])
-
-        nodes = []
-        ids_by_internal = {}
-        for row in node_rows:
-            properties = dict(row["properties"] or {})
-            node_type = str((row["labels"] or ["Entity"])[0])
-            node_id = public_id(row)
-            ids_by_internal[row["internal_id"]] = node_id
-            nodes.append({"id": node_id, "type": node_type, "label": node_id, "properties": properties})
-
-        edges = []
-        for row in edge_rows:
-            source = ids_by_internal.get(row["source_internal_id"])
-            target = ids_by_internal.get(row["target_internal_id"])
-            if source is None or target is None:
-                continue
-            edges.append({
-                "id": str(row["relationship_id"]),
-                "source": source,
-                "target": target,
-                "type": str(row["relationship_type"]),
-                "properties": dict(row["relationship_properties"] or {}),
-            })
-
-        return {"graph_available": True, "nodes": nodes, "edges": edges, "depth": depth}
-
-    def get_cluster_graph(self, dataset_id: str, wallet_ids: list[str], max_nodes: int = 200, max_edges: int = 500) -> dict[str, Any]:
-        """Return a bounded graph seeded only by the selected cluster's wallets."""
-        if self._driver is None:
-            self.connect()
-        seeds = [str(wallet_id) for wallet_id in wallet_ids]
-        if not seeds:
-            return {"graph_available": True, "nodes": [], "edges": []}
-        max_nodes, max_edges = min(max(1, int(max_nodes)), 200), min(max(1, int(max_edges)), 500)
-        with self._driver.session() as session:
-            node_rows = list(session.run("""
-                MATCH (wallet:Wallet {dataset_id: $dataset_id}) WHERE wallet.wallet_id IN $wallet_ids
-                MATCH (wallet)-[*0..2]-(node)
+                RETURN elementId(node) AS internal_id, labels(node)[0] AS label, properties(node) AS properties
+                UNION
+                MATCH (root:Wallet {{dataset_id: $dataset_id, wallet_id: $wallet_id}})-[:INPUT_FROM|OUTPUT_TO]-(:Transaction)-[:OBSERVED_IN]->(node:IP)
                 WHERE node.dataset_id = $dataset_id
-                WITH DISTINCT node LIMIT $max_nodes
-                RETURN elementId(node) AS internal_id, labels(node) AS labels, properties(node) AS properties
-                """, dataset_id=str(dataset_id), wallet_ids=seeds, max_nodes=max_nodes))
+                RETURN DISTINCT elementId(node) AS internal_id, labels(node)[0] AS label, properties(node) AS properties
+                """,
+                dataset_id=str(dataset_id), wallet_id=str(wallet_id), max_nodes=max_nodes,
+            ))
             if not node_rows:
-                return {"graph_available": True, "nodes": [], "edges": []}
+                return {"nodes": [], "edges": [], "limited": False}
             internal_ids = [row["internal_id"] for row in node_rows]
-            edge_rows = list(session.run("""
-                MATCH (source)-[relationship]->(target)
+            edge_rows = list(session.run(
+                """
+                MATCH (source)-[relationship:INPUT_FROM|OUTPUT_TO|OBSERVED_IN]->(target)
                 WHERE elementId(source) IN $internal_ids AND elementId(target) IN $internal_ids
-                WITH relationship, source, target LIMIT $max_edges
-                RETURN elementId(relationship) AS relationship_id, elementId(source) AS source_internal_id,
-                       elementId(target) AS target_internal_id, type(relationship) AS relationship_type,
-                       properties(relationship) AS relationship_properties
-                """, internal_ids=internal_ids, max_edges=max_edges))
-
-        identifiers = {"Wallet": "wallet_id", "Transaction": "txid", "IP": "ip", "ASN": "asn", "Country": "country"}
-        ids = {}
-        nodes = []
-        for row in node_rows:
-            properties, labels = dict(row["properties"] or {}), row["labels"] or ["Entity"]
-            node_type = str(labels[0])
-            node_id = str(properties.get(identifiers.get(node_type), row["internal_id"]))
-            ids[row["internal_id"]] = node_id
-            nodes.append({"id": node_id, "type": node_type, "label": node_id, "properties": properties})
-        edges = [{"id": str(row["relationship_id"]), "source": ids[row["source_internal_id"]], "target": ids[row["target_internal_id"]], "type": str(row["relationship_type"]), "properties": dict(row["relationship_properties"] or {})} for row in edge_rows if row["source_internal_id"] in ids and row["target_internal_id"] in ids]
-        return {"graph_available": True, "nodes": nodes, "edges": edges}
+                RETURN elementId(source) AS source, elementId(target) AS target, type(relationship) AS type
+                LIMIT $max_edges
+                """,
+                internal_ids=internal_ids, max_edges=max_edges,
+            ))
+        key = {"Wallet": "wallet_id", "Transaction": "txid", "IP": "ip"}
+        ids = {row["internal_id"]: str(row["properties"].get(key.get(row["label"], "id"), row["internal_id"])) for row in node_rows}
+        nodes = [{"id": ids[row["internal_id"]], "type": row["label"]} for row in node_rows]
+        edges = [{"id": f"{ids[row['source']]}>{ids[row['target']]}", "source": ids[row["source"]], "target": ids[row["target"]], "type": row["type"]}
+                 for row in edge_rows]
+        return {"nodes": nodes, "edges": edges, "limited": len(node_rows) >= max_nodes or len(edge_rows) >= max_edges}

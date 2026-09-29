@@ -1,93 +1,81 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from backend.pipeline.orchestrator import AnalysisOrchestrator
 
 
-@pytest.fixture
-def synthetic_csv_path() -> Path:
-    return Path("data/synthetic/transactions.csv")
+def _run(path, tmp_path, **kwargs):
+    return AnalysisOrchestrator().run(str(path), output_dir=str(tmp_path / "out"), persist_graph=False, **kwargs)
 
 
-@pytest.fixture
-def synthetic_json_path() -> Path:
-    return Path("data/synthetic/transactions.json")
+@pytest.fixture(scope="module")
+def csv_result(small_paths, tmp_path_factory):
+    seeds = small_paths["seeds"].read_text().split()
+    return AnalysisOrchestrator().run(str(small_paths["csv"]), output_dir=str(tmp_path_factory.mktemp("out")), persist_graph=False, seed_wallets=seeds)
 
 
-@pytest.fixture
-def synthetic_xml_path() -> Path:
-    return Path("data/synthetic/transactions.xml")
+def test_pipeline_produces_every_model_output(csv_result):
+    overview = csv_result.overview
+    assert overview["stats"]["transactions"] == 1500
+    assert overview["stats"]["entities"] < overview["stats"]["wallets"]
+    assert overview["patterns"]["peeling_chain"] >= 1 and overview["patterns"]["coinjoin"] >= 1
+    assert overview["seeds"] and overview["risk_distribution"]["CRITICAL"] >= len(overview["seeds"])
+    families = {model["family"] for model in overview["models"]}
+    assert families == {"anomaly detection", "entity clustering", "pattern detection", "risk propagation", "risk scoring"}
+    wallets = csv_result.investigation.wallets
+    assert {"risk_score", "confidence", "entity_id", "cluster_id", "signal_taint", "contrib_anomaly"} <= set(wallets.columns)
+    contributions = wallets[[f"contrib_{name}" for name in ("anomaly", "pattern", "taint", "network")]].sum(axis=1)
+    assert (abs(contributions - wallets["risk_score"]) < 0.05).all()
 
 
-def test_pipeline_processes_csv(synthetic_csv_path: Path):
-    result = AnalysisOrchestrator().run(str(synthetic_csv_path), random_state=42)
-    assert result.dataset_statistics["total_records"] > 0
-    assert not result.wallet_features.empty
-    assert not result.anomaly_results.empty
-    assert not result.cluster_results.empty
-    assert not result.risk_scores.empty
-    assert not result.explanations.empty
+def test_pipeline_evaluates_against_synthetic_labels(csv_result):
+    evaluation = csv_result.evaluation
+    assert evaluation["labels_available"] is True
+    assert evaluation["transaction_auc"] > 0.7
+    detectors = {item["detector"]: item for item in evaluation["detectors"]}
+    assert detectors["coinjoin"]["precision"] == 1.0
+    assert detectors["peeling_chain"]["recall"] > 0.9
 
 
-def test_pipeline_processes_json(synthetic_json_path: Path):
-    result = AnalysisOrchestrator().run(str(synthetic_json_path), random_state=42)
-    assert result.dataset_statistics["total_records"] > 0
-    assert not result.wallet_features.empty
+def test_pipeline_writes_output_files(csv_result):
+    out = csv_result.output_dir
+    for name in ("analysis_summary.json", "wallet_risk_scores.json", "wallet_features.csv", "wallet_clusters.csv", "investigative_leads.json", "transaction_alerts.json", "patterns.json"):
+        assert (__import__("pathlib").Path(out) / name).exists(), name
+    leads = json.loads((__import__("pathlib").Path(out) / "investigative_leads.json").read_text())
+    assert leads[0]["rank"] == 1 and leads[0]["reasons"]
 
 
-def test_pipeline_processes_xml(synthetic_xml_path: Path):
-    result = AnalysisOrchestrator().run(str(synthetic_xml_path), random_state=42)
-    assert result.dataset_statistics["total_records"] > 0
-    assert not result.wallet_features.empty
+def test_formats_are_equivalent(small_paths, tmp_path, csv_result):
+    for key in ("json", "xml"):
+        result = _run(small_paths[key], tmp_path / key)
+        assert result.overview["stats"] == csv_result.overview["stats"]
+        assert result.overview["patterns"] == csv_result.overview["patterns"]
 
 
-def test_pipeline_writes_output_files(tmp_path):
-    output_dir = tmp_path / "analysis"
-    result = AnalysisOrchestrator().run("data/synthetic/transactions.csv", output_dir=str(output_dir), random_state=42)
-    assert output_dir.exists()
-    assert (output_dir / "analysis_summary.json").exists()
-    assert (output_dir / "wallet_risk_scores.json").exists()
-    assert (output_dir / "wallet_features.csv").exists()
-    assert (output_dir / "wallet_clusters.csv").exists()
-    assert (output_dir / "investigative_leads.json").exists()
-    assert result.output_dir == str(output_dir)
+def test_pipeline_is_deterministic(small_paths, tmp_path):
+    first = _run(small_paths["csv"], tmp_path / "a").investigation.wallets["risk_score"]
+    second = _run(small_paths["csv"], tmp_path / "b").investigation.wallets["risk_score"]
+    assert first.equals(second)
 
 
-def test_pipeline_handles_invalid_input(tmp_path):
-    invalid_path = tmp_path / "invalid.csv"
-    invalid_path.write_text("timestamp,src_ip\n2024-01-01,invalid\n")
-
-    with pytest.raises(ValueError, match="invalid|empty|record"):
-        AnalysisOrchestrator().run(str(invalid_path), random_state=42)
-
-
-def test_pipeline_handles_empty_input(tmp_path):
-    empty_path = tmp_path / "empty.json"
-    empty_path.write_text(json.dumps([]))
-
-    with pytest.raises(ValueError, match="empty"):
-        AnalysisOrchestrator().run(str(empty_path), random_state=42)
-
-
-def test_pipeline_deterministic_with_seed(synthetic_csv_path: Path):
-    result_a = AnalysisOrchestrator().run(str(synthetic_csv_path), random_state=42)
-    result_b = AnalysisOrchestrator().run(str(synthetic_csv_path), random_state=42)
-    pd.testing.assert_frame_equal(result_a.wallet_features, result_b.wallet_features)
-    pd.testing.assert_frame_equal(result_a.risk_scores, result_b.risk_scores)
-    assert result_a.anomaly_results.equals(result_b.anomaly_results)
-    assert result_a.cluster_results.equals(result_b.cluster_results)
-
-
-def test_pipeline_runs_on_unlabeled_dataset_and_skips_label_metrics(minimal_csv_path, tmp_path):
-    result = AnalysisOrchestrator().run(str(minimal_csv_path), output_dir=str(tmp_path / "out"), random_state=42)
-    assert result.dataset_statistics["total_records"] == 300
-    assert result.dataset_statistics["labels_available"] is False
-    assert result.dataset_statistics["behavior_distribution"] == {}
+def test_pipeline_runs_on_the_minimum_problem_statement_fields(minimal_csv_path, tmp_path):
+    result = _run(minimal_csv_path, tmp_path)
+    assert result.overview["stats"]["transactions"] == 1500
     assert result.evaluation["labels_available"] is False
-    assert "anomaly_rate_by_profile" not in result.evaluation
-    assert not result.risk_scores.empty
+    assert result.overview["risk_distribution"]
+
+
+def test_pipeline_rejects_missing_empty_and_unsupported_input(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        _run(tmp_path / "missing.csv", tmp_path)
+    empty = tmp_path / "empty.csv"
+    empty.write_text("timestamp,txid\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        _run(empty, tmp_path)
+    other = tmp_path / "data.txt"
+    other.write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError):
+        _run(other, tmp_path)

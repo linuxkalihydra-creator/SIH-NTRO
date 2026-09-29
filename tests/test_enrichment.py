@@ -79,6 +79,6 @@ def test_orchestrator_uses_configured_geoip_database(tmp_path):
     dataset.write_text(json.dumps(records), encoding="utf-8")
     db = _write_country_mmdb(tmp_path / "GeoLite2-Country.mmdb", {str(network): "NL" for network in NETWORK_RANGES})
 
-    result = AnalysisOrchestrator(geoip_db_path=db).run(str(dataset), output_dir=str(tmp_path / "out"))
-    assert result.dataset_statistics["geo_country_sources"] == {"geolite2": 300}
+    result = AnalysisOrchestrator(geoip_db_path=db).run(str(dataset), output_dir=str(tmp_path / "out"), persist_graph=False)
+    assert result.overview["geo_sources"] == {"geolite2": 300}
     assert {record["geo_country"] for record in result.records} == {"NL"}

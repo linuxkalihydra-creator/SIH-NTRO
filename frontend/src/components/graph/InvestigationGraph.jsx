@@ -1,681 +1,444 @@
 /**
- * InvestigationGraph — Cytoscape-based link-analysis graph for the Clusters page.
+ * InvestigationGraph — Cytoscape link-analysis graph for the /graph endpoint.
  *
- * Layout: uses Cytoscape's built-in `cose` layout (physics-based, produces
- * well-separated nodes). Zero external layout plugins required.
- * Falls back to `breadthfirst` when the graph is large (> 150 nodes) for performance.
+ * Nodes: Wallet | Transaction | IP (risk_level, is_seed, is_focus).
+ * Edges: Wallet -INPUT_FROM-> Transaction -OUTPUT_TO-> Wallet, Transaction -OBSERVED_IN-> IP.
+ * Arrows point in the direction value flows. Uses Cytoscape directly (no wrapper)
+ * so initialisation timing is under our control.
  *
- * Controls: Fit, Center, Zoom In, Zoom Out, Reset Layout, Toggle Labels, Search Node.
- * Node click: shows a side panel with all properties returned by the API.
- *
- * Uses Cytoscape directly (no react-cytoscapejs wrapper) for reliable initialization
- * timing and React 19 compatibility.
+ * Clicking a Wallet or Transaction calls onSelect({type, id}); IP nodes show a
+ * details card instead.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import cytoscape from 'cytoscape';
+import { fmtBtc, fmtScore, isNum, normLevel } from '../../lib/format.js';
 import './InvestigationGraph.css';
 
-// ─── Local error boundary ─────────────────────────────────────────────────────
-// Prevents a Cytoscape initialization crash from blanking the entire Clusters page.
-class GraphErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, message: '' };
-  }
+const LEVELS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
-  static getDerivedStateFromError(error) {
-    return { hasError: true, message: error?.message || 'Unknown error' };
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="graph-state">
-          <span className="graph-state-icon">⚠️</span>
-          <p>Graph rendering failed: {this.state.message}</p>
-          <p style={{ fontSize: 12, color: '#4a7080' }}>
-            The rest of the cluster data is still available above.
-          </p>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-// ─── Node types ──────────────────────────────────────────────────────────────
-
-const NODE_TYPES = ['Wallet', 'Transaction', 'IP', 'ASN', 'Country'];
-
-// Colours per type — bright but professional
-const TYPE_COLORS = {
-  Wallet:      { bg: '#e07b39', border: '#ffb07a', shape: 'ellipse' },
-  Transaction: { bg: '#3a86cc', border: '#7ec8f5', shape: 'roundrectangle' },
-  IP:          { bg: '#5aa05a', border: '#9de06d', shape: 'diamond' },
-  ASN:         { bg: '#9b59b6', border: '#d8a9f0', shape: 'hexagon' },
-  Country:     { bg: '#c9a227', border: '#f5d97a', shape: 'star' },
-};
-
-// ─── Cytoscape stylesheet ────────────────────────────────────────────────────
-
-const buildStylesheet = (labelsVisible) => [
-  {
-    selector: 'node',
-    style: {
-      label: labelsVisible ? 'data(label)' : '',
-      color: '#f0ece0',
-      'font-size': 10,
-      'font-family': '"Segoe UI", system-ui, sans-serif',
-      'text-wrap': 'ellipsis',
-      'text-max-width': 100,
-      'text-valign': 'bottom',
-      'text-halign': 'center',
-      'text-margin-y': 6,
-      'text-background-color': '#0d1b26',
-      'text-background-opacity': 0.75,
-      'text-background-padding': '3px',
-      'text-background-shape': 'roundrectangle',
-      'background-color': '#4a5a68',
-      width: 32,
-      height: 32,
-      'border-width': 2,
-      'border-color': '#6a7f8e',
-      'transition-property': 'border-color, border-width, background-color, shadow-blur',
-      'transition-duration': '180ms',
-    },
-  },
-  // Per-type node overrides
-  {
-    selector: 'node[type="Wallet"]',
-    style: {
-      shape: 'ellipse',
-      'background-color': TYPE_COLORS.Wallet.bg,
-      'border-color': TYPE_COLORS.Wallet.border,
-      width: 44,
-      height: 44,
-    },
-  },
-  {
-    selector: 'node[type="Transaction"]',
-    style: {
-      shape: 'roundrectangle',
-      'background-color': TYPE_COLORS.Transaction.bg,
-      'border-color': TYPE_COLORS.Transaction.border,
-      width: 38,
-      height: 28,
-    },
-  },
-  {
-    selector: 'node[type="IP"]',
-    style: {
-      shape: 'diamond',
-      'background-color': TYPE_COLORS.IP.bg,
-      'border-color': TYPE_COLORS.IP.border,
-      width: 34,
-      height: 34,
-    },
-  },
-  {
-    selector: 'node[type="ASN"]',
-    style: {
-      shape: 'hexagon',
-      'background-color': TYPE_COLORS.ASN.bg,
-      'border-color': TYPE_COLORS.ASN.border,
-      width: 32,
-      height: 32,
-    },
-  },
-  {
-    selector: 'node[type="Country"]',
-    style: {
-      shape: 'star',
-      'background-color': TYPE_COLORS.Country.bg,
-      'border-color': TYPE_COLORS.Country.border,
-      width: 34,
-      height: 34,
-    },
-  },
-  // Edges
-  {
-    selector: 'edge',
-    style: {
-      width: 1.5,
-      'line-color': '#4a6070',
-      'target-arrow-color': '#4a6070',
-      'target-arrow-shape': 'triangle',
-      'arrow-scale': 0.9,
-      'curve-style': 'bezier',
-      label: labelsVisible ? 'data(type)' : '',
-      color: '#8da0ad',
-      'font-size': 8,
-      'text-background-color': '#0d1b26',
-      'text-background-opacity': 0.8,
-      'text-background-padding': '2px',
-      'text-rotation': 'autorotate',
-    },
-  },
-  // Interaction states
-  {
-    selector: '.focus',
-    style: {
-      'border-width': 4,
-      'border-color': '#f5d35a',
-      'shadow-blur': 18,
-      'shadow-color': '#f5d35a',
-      'shadow-opacity': 0.85,
-      'z-index': 10,
-    },
-  },
-  {
-    selector: '.connected',
-    style: {
-      'line-color': '#f5d35a',
-      'target-arrow-color': '#f5d35a',
-      width: 2.5,
-      opacity: 1,
-    },
-  },
-  {
-    selector: '.dimmed',
-    style: { opacity: 0.12 },
-  },
-  {
-    selector: '.search-hit',
-    style: {
-      'border-width': 5,
-      'border-color': '#00e5ff',
-      'shadow-blur': 22,
-      'shadow-color': '#00e5ff',
-      'shadow-opacity': 0.9,
-      'z-index': 20,
-    },
-  },
-];
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function shortLabel(node) {
-  const raw = String(node.label || node.id || '');
-  return raw.length > 22 ? `${raw.slice(0, 19)}…` : raw;
-}
-
-function chooseLayout(nodeCount) {
-  if (nodeCount > 150) {
-    return {
-      name: 'breadthfirst',
-      directed: true,
-      animate: false,
-      padding: 40,
-      spacingFactor: 1.4,
-    };
-  }
+// Colours come from CSS custom properties so the canvas follows light/dark mode.
+function readPalette(element) {
+  const css = getComputedStyle(element);
+  const v = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
   return {
-    name: 'cose',          // built-in physics layout — no plugin needed
-    animate: false,
-    padding: 50,
-    nodeRepulsion: () => 8000,
-    idealEdgeLength: () => 80,
-    edgeElasticity: () => 100,
-    gravity: 0.35,
-    numIter: 1000,
-    randomize: true,
-    componentSpacing: 60,
-    nestingFactor: 1.2,
-    coolingFactor: 0.99,
-    minTemp: 1.0,
+    CRITICAL: v('--risk-critical', '#d03b3b'),
+    HIGH: v('--risk-high', '#ec835a'),
+    MEDIUM: v('--risk-medium', '#fab219'),
+    LOW: v('--risk-low', '#8a94a3'),
+    none: v('--graph-node', '#9aa3ae'),
+    ip: v('--graph-ip', '#6b7785'),
+    text: v('--text', '#1d2330'),
+    textBg: v('--surface', '#ffffff'),
+    edge: v('--graph-edge', '#9aa3ae'),
+    seed: v('--seed-border', '#111111'),
+    focus: v('--accent', '#2a78d6'),
+    nodeBorder: v('--surface', '#ffffff'),
   };
 }
 
-// Format a raw property value for display
-function fmtValue(val) {
-  if (val === null || val === undefined) return '—';
-  if (typeof val === 'number') return Number.isInteger(val) ? String(val) : val.toFixed(4);
-  return String(val);
+function buildStylesheet(labelsVisible, p) {
+  const levelStyles = LEVELS.map((level) => ({
+    selector: `node[level = "${level}"]`,
+    style: { 'background-color': p[level] },
+  }));
+  return [
+    {
+      selector: 'node',
+      style: {
+        label: labelsVisible ? 'data(label)' : '',
+        color: p.text,
+        'font-size': 9,
+        'font-family': 'system-ui, -apple-system, "Segoe UI", sans-serif',
+        'text-valign': 'bottom',
+        'text-halign': 'center',
+        'text-margin-y': 4,
+        'text-background-color': p.textBg,
+        'text-background-opacity': 0.8,
+        'text-background-padding': '1px',
+        'text-wrap': 'ellipsis',
+        'text-max-width': 90,
+        'min-zoomed-font-size': 7,
+        'background-color': p.none,
+        'border-width': 1.5,
+        'border-color': p.nodeBorder,
+        width: 22,
+        height: 22,
+      },
+    },
+    { selector: 'node[type = "Wallet"]', style: { shape: 'ellipse', width: 24, height: 24 } },
+    { selector: 'node[type = "Transaction"]', style: { shape: 'round-rectangle', width: 18, height: 14 } },
+    { selector: 'node[type = "IP"]', style: { shape: 'diamond', width: 16, height: 16, 'background-color': p.ip } },
+    ...levelStyles,
+    { selector: 'node[?isSeed]', style: { 'border-width': 4.5, 'border-color': p.seed } },
+    {
+      selector: 'node[?isFocus]',
+      style: {
+        width: 40,
+        height: 40,
+        'font-size': 11,
+        'font-weight': 'bold',
+        'underlay-color': p.focus,
+        'underlay-opacity': 0.3,
+        'underlay-padding': 7,
+        'underlay-shape': 'ellipse',
+        'z-index': 20,
+      },
+    },
+    { selector: 'node[?isFocus][type = "Transaction"]', style: { width: 36, height: 26 } },
+    {
+      selector: 'edge',
+      style: {
+        width: 'data(w)',
+        'line-color': p.edge,
+        'target-arrow-color': p.edge,
+        'target-arrow-shape': 'triangle',
+        'arrow-scale': 0.8,
+        'curve-style': 'bezier',
+        opacity: 0.85,
+        label: labelsVisible ? 'data(amountLabel)' : '',
+        'font-size': 8,
+        color: p.text,
+        'text-background-color': p.textBg,
+        'text-background-opacity': 0.75,
+        'text-background-padding': '1px',
+        'text-rotation': 'autorotate',
+        'min-zoomed-font-size': 8,
+      },
+    },
+    { selector: 'edge[type = "OBSERVED_IN"]', style: { 'line-style': 'dashed', 'target-arrow-shape': 'none', width: 1, opacity: 0.6 } },
+    { selector: '.hl', style: { 'line-color': p.focus, 'target-arrow-color': p.focus, opacity: 1, 'z-index': 15 } },
+    { selector: '.faded', style: { opacity: 0.15 } },
+  ];
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// Direction each edge type must have so arrows follow value flow.
+const EXPECTED = {
+  INPUT_FROM: ['Wallet', 'Transaction'],
+  OUTPUT_TO: ['Transaction', 'Wallet'],
+  OBSERVED_IN: ['Transaction', 'IP'],
+};
 
-export default function InvestigationGraph({ data, walletId, onNodeSelect }) {
-  const cyRef = useRef(null);
+function buildElements(data) {
+  const rawNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+  const rawEdges = Array.isArray(data?.edges) ? data.edges : [];
+  const types = new Map();
+  const nodes = [];
+  for (const node of rawNodes) {
+    const id = node?.id !== null && node?.id !== undefined ? String(node.id) : '';
+    if (!id || types.has(id)) continue;
+    const type = ['Wallet', 'Transaction', 'IP'].includes(node.type) ? node.type : 'Wallet';
+    types.set(id, type);
+    const label = String(node.label || id);
+    nodes.push({
+      group: 'nodes',
+      data: {
+        id,
+        type,
+        label: label.length > 18 ? `${label.slice(0, 8)}…${label.slice(-6)}` : label,
+        fullLabel: label,
+        level: type === 'IP' ? '' : normLevel(node.risk_level) || '',
+        riskScore: isNum(node.risk_score) ? node.risk_score : null,
+        isSeed: Boolean(node.is_seed),
+        isFocus: Boolean(node.is_focus),
+        country: node.country,
+        asn: node.asn,
+      },
+    });
+  }
+
+  const maxAmount = rawEdges.reduce((m, e) => (isNum(e?.amount) && e.amount > m ? e.amount : m), 0);
+  const edgeIds = new Set();
+  const edges = [];
+  rawEdges.forEach((edge, index) => {
+    let source = edge?.source !== null && edge?.source !== undefined ? String(edge.source) : '';
+    let target = edge?.target !== null && edge?.target !== undefined ? String(edge.target) : '';
+    if (!types.has(source) || !types.has(target)) return;
+    const expected = EXPECTED[edge.type];
+    if (expected && types.get(source) === expected[1] && types.get(target) === expected[0]) {
+      [source, target] = [target, source];
+    }
+    let id = edge.id !== null && edge.id !== undefined ? String(edge.id) : `${source}->${target}#${index}`;
+    if (edgeIds.has(id) || types.has(id)) id = `${id}#${index}`;
+    edgeIds.add(id);
+    const amount = isNum(edge.amount) ? edge.amount : null;
+    const w = amount !== null && maxAmount > 0 ? 1 + 3 * (Math.log1p(amount) / Math.log1p(maxAmount)) : 1.2;
+    edges.push({
+      group: 'edges',
+      data: { id, source, target, type: edge.type || '', amount, amountLabel: amount !== null ? fmtBtc(amount) : '', w },
+    });
+  });
+  return { nodes, edges };
+}
+
+/** Deterministic starting positions: BFS rings around the focus node(s). */
+function initialPositions(nodes, edges) {
+  const adjacency = new Map(nodes.map((n) => [n.data.id, []]));
+  for (const e of edges) {
+    adjacency.get(e.data.source)?.push(e.data.target);
+    adjacency.get(e.data.target)?.push(e.data.source);
+  }
+  let roots = nodes.filter((n) => n.data.isFocus).map((n) => n.data.id);
+  if (!roots.length && nodes.length) {
+    const best = [...nodes].sort((a, b) => (b.data.riskScore ?? -1) - (a.data.riskScore ?? -1))[0];
+    roots = [best.data.id];
+  }
+  const depth = new Map(roots.map((id) => [id, 0]));
+  const queue = [...roots];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const next of adjacency.get(id) || []) {
+      if (!depth.has(next)) {
+        depth.set(next, depth.get(id) + 1);
+        queue.push(next);
+      }
+    }
+  }
+  const maxDepth = Math.max(0, ...depth.values());
+  const rings = new Map();
+  for (const n of nodes) {
+    const d = depth.has(n.data.id) ? depth.get(n.data.id) : maxDepth + 1;
+    if (!rings.has(d)) rings.set(d, []);
+    rings.get(d).push(n.data.id);
+  }
+  const positions = {};
+  [...rings.keys()].sort((a, b) => a - b).forEach((d) => {
+    const ids = rings.get(d).sort();
+    const radius = d === 0 && ids.length === 1 ? 0 : Math.max(d * 110, (ids.length * 34) / (2 * Math.PI));
+    ids.forEach((id, i) => {
+      const angle = (2 * Math.PI * i) / ids.length + d * 0.35;
+      positions[id] = { x: radius * Math.cos(angle), y: radius * Math.sin(angle) };
+    });
+  });
+  return positions;
+}
+
+function layoutOptions(nodeCount) {
+  return {
+    name: 'cose',
+    randomize: false,
+    animate: false,
+    fit: true,
+    padding: 24,
+    nodeDimensionsIncludeLabels: false,
+    nodeRepulsion: () => (nodeCount > 120 ? 3500 : 6000),
+    nodeOverlap: 10,
+    idealEdgeLength: () => (nodeCount > 120 ? 45 : 65),
+    edgeElasticity: () => 100,
+    nestingFactor: 1.2,
+    gravity: 0.35,
+    numIter: 1200,
+    initialTemp: 200,
+    coolingFactor: 0.95,
+    minTemp: 1.0,
+    componentSpacing: 60,
+  };
+}
+
+function useColorSchemeVersion() {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!media) return undefined;
+    const onChange = () => setVersion((v) => v + 1);
+    media.addEventListener?.('change', onChange);
+    return () => media.removeEventListener?.('change', onChange);
+  }, []);
+  return version;
+}
+
+export default function InvestigationGraph({ data, onSelect }) {
   const containerRef = useRef(null);
+  const cyRef = useRef(null);
+  const onSelectRef = useRef(onSelect);
 
-  const [labelsVisible, setLabelsVisible] = useState(true);
-  const [filters, setFilters] = useState(() => new Set(NODE_TYPES));
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedNodeData, setSelectedNodeData] = useState(null);
-  const [graphReady, setGraphReady] = useState(false);
+  const elements = useMemo(() => buildElements(data), [data]);
+  const nodeCount = elements.nodes.length;
+  const [labelsVisible, setLabelsVisible] = useState(() => nodeCount <= 80);
+  const [tooltip, setTooltip] = useState(null);
+  const schemeVersion = useColorSchemeVersion();
 
-  // Stable refs for callbacks and stylesheet to avoid re-creating the cy instance
-  const onNodeSelectRef = useRef(onNodeSelect);
-  const stylesheetRef = useRef(stylesheet);
-  useEffect(() => { onNodeSelectRef.current = onNodeSelect; }, [onNodeSelect]);
-  useEffect(() => { stylesheetRef.current = stylesheet; }, [stylesheet]);
+  // Everything the init effect reads lives in refs declared *after* the values
+  // they mirror, so there is no temporal-dead-zone access during render.
+  const labelsRef = useRef(labelsVisible);
+  useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
+  useEffect(() => { labelsRef.current = labelsVisible; }, [labelsVisible]);
 
-  // ── Elements memo — only recalculated when data changes ──────────────────
-  // Validates and sanitises API data so Cytoscape never receives:
-  //   • nodes with undefined/duplicate IDs (would throw "Can't create second element")
-  //   • edges whose source/target reference a missing node
-  //   • edges missing source or target fields entirely
-  const elements = useMemo(() => {
-    const rawNodes = Array.isArray(data?.nodes) ? data.nodes : [];
-    const rawEdges = Array.isArray(data?.edges) ? data.edges : [];
-
-    // Build validated node list (skip any node whose id is missing/null/undefined)
-    const seenIds = new Set();
-    const validNodes = [];
-    for (const node of rawNodes) {
-      const nodeId = node?.id != null ? String(node.id) : null;
-      if (!nodeId || seenIds.has(nodeId)) continue; // skip missing/duplicate IDs
-      seenIds.add(nodeId);
-      // Flatten nested `properties` object into data so they appear in the details panel.
-      const { properties, ...rest } = node;
-      validNodes.push({
-        data: {
-          ...rest,
-          ...(properties && typeof properties === 'object' ? properties : {}),
-          id: nodeId,
-          label: shortLabel({ ...rest, id: nodeId }),
-        },
-      });
-    }
-
-    // Build validated edge list (skip edges with missing source/target or orphaned refs)
-    const seenEdgeIds = new Set();
-    const validEdges = [];
-    for (const edge of rawEdges) {
-      const edgeId = edge?.id != null ? String(edge.id) : null;
-      const src   = edge?.source != null ? String(edge.source) : null;
-      const tgt   = edge?.target != null ? String(edge.target) : null;
-      if (!src || !tgt) continue;              // must have source + target
-      if (!seenIds.has(src) || !seenIds.has(tgt)) continue; // both endpoints must exist
-      if (edgeId && seenEdgeIds.has(edgeId)) continue;       // no duplicate edge IDs
-      if (edgeId) seenEdgeIds.add(edgeId);
-      const { properties: edgeProps, ...edgeRest } = edge;
-      validEdges.push({
-        data: {
-          ...edgeRest,
-          ...(edgeProps && typeof edgeProps === 'object' ? edgeProps : {}),
-          source: src,
-          target: tgt,
-          ...(edgeId ? { id: edgeId } : {}),
-        },
-      });
-    }
-
-    return [...validNodes, ...validEdges];
-  }, [data]);
-
-  const nodeCount = data?.nodes?.length ?? 0;
-
-  // ── Stylesheet memo — recalculated only when labelsVisible changes ────────
-  const stylesheet = useMemo(() => buildStylesheet(labelsVisible), [labelsVisible]);
-
-  // ── Initialize Cytoscape directly ──────────────────────────────────────────
-  // This replaces the react-cytoscapejs wrapper. We create the cy instance
-  // ourselves in a useEffect, after the container has mounted and has dimensions.
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || elements.length === 0) return;
+    if (!container || nodeCount === 0) return undefined;
+    let cancelled = false;
+    let rafId = 0;
 
-    // Destroy previous instance if it exists (e.g. on data change)
-    if (cyRef.current) {
-      cyRef.current.destroy();
-      cyRef.current = null;
-      setGraphReady(false);
-    }
-
-    // Use requestAnimationFrame to ensure the container has been laid out by
-    // the browser and has real non-zero dimensions before Cytoscape initializes.
-    const rafId = requestAnimationFrame(() => {
-      // Bail if container was removed before rAF fires
-      if (!containerRef.current) return;
-
+    const init = () => {
+      if (cancelled || cyRef.current) return;
       const { width, height } = container.getBoundingClientRect();
-      if (width === 0 || height === 0) {
-        console.warn('[InvestigationGraph] Container has zero dimensions, deferring init');
-        return;
-      }
+      if (!width || !height) return;
+      const positions = initialPositions(elements.nodes, elements.edges);
+      const cy = cytoscape({
+        container,
+        elements: [
+          ...elements.nodes.map((n) => ({ ...n, position: positions[n.data.id] })),
+          ...elements.edges,
+        ],
+        style: buildStylesheet(labelsRef.current, readPalette(container)),
+        minZoom: 0.15,
+        maxZoom: 4,
+        boxSelectionEnabled: false,
+        autounselectify: true,
+      });
+      cyRef.current = cy;
 
-      try {
-        const cy = cytoscape({
-          container,
-          elements,
-          style: stylesheetRef.current,
-          minZoom: 0.1,
-          maxZoom: 4,
-          wheelSensitivity: 0.3,
-        });
+      const showTip = (node, pinned) => {
+        const pos = node.renderedPosition();
+        setTooltip({ ...node.data(), x: pos.x, y: pos.y, pinned });
+      };
+      cy.on('mouseover', 'node', (event) => {
+        const node = event.target;
+        node.connectedEdges().addClass('hl');
+        container.style.cursor = node.data('type') === 'IP' ? 'help' : 'pointer';
+        setTooltip((current) => (current?.pinned ? current : { ...node.data(), ...node.renderedPosition(), pinned: false }));
+      });
+      cy.on('mouseout', 'node', (event) => {
+        event.target.connectedEdges().removeClass('hl');
+        container.style.cursor = '';
+        setTooltip((current) => (current?.pinned ? current : null));
+      });
+      cy.on('tap', 'node', (event) => {
+        const node = event.target;
+        const type = node.data('type');
+        if (type === 'Wallet' || type === 'Transaction') {
+          setTooltip(null);
+          onSelectRef.current?.({ type: type === 'Wallet' ? 'wallet' : 'transaction', id: node.id() });
+        } else {
+          showTip(node, true);
+        }
+      });
+      cy.on('tap', (event) => {
+        if (event.target === cy) setTooltip(null);
+      });
+      cy.on('pan zoom', () => setTooltip((current) => (current?.pinned ? null : current)));
 
-        // Wire up node tap handler
-        cy.on('tap', 'node', (event) => {
-          const node = event.target;
-          cy.elements().removeClass('focus connected dimmed search-hit');
-          node.addClass('focus');
-          node.connectedEdges().addClass('connected');
-          node.neighborhood().nodes().not(node).addClass('focus');
-          cy.elements().not(node.union(node.neighborhood())).addClass('dimmed');
-
-          const nodeData = node.data();
-          setSelectedNodeData(nodeData);
-          onNodeSelectRef.current?.(nodeData);
-        });
-
-        // Run layout
-        const layout = cy.layout(chooseLayout(cy.nodes().length));
-        layout.run();
-
-        // Fit the graph after layout completes
-        cy.once('layoutstop', () => {
-          cy.fit(undefined, 40);
-          setGraphReady(true);
-        });
-
-        cyRef.current = cy;
-      } catch (err) {
-        console.error('[InvestigationGraph] Cytoscape initialization failed:', err);
-      }
-    });
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      if (cyRef.current) {
-        cyRef.current.destroy();
-        cyRef.current = null;
-        setGraphReady(false);
+      cy.layout(layoutOptions(nodeCount)).run();
+      cy.fit(undefined, 24);
+      if (cy.zoom() > 1.6) {
+        cy.zoom(1.6);
+        cy.center();
       }
     };
-  }, [elements]); // Re-create when elements change
 
-  // ── Update stylesheet when labels toggle ──────────────────────────────────
+    rafId = requestAnimationFrame(init);
+    const observer = window.ResizeObserver
+      ? new ResizeObserver(() => {
+        if (cyRef.current) cyRef.current.resize();
+        else init();
+      })
+      : null;
+    observer?.observe(container);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      observer?.disconnect();
+      cyRef.current?.destroy();
+      cyRef.current = null;
+    };
+  }, [elements, nodeCount]);
+
+  // Restyle on label toggle or colour-scheme change without rebuilding the graph.
   useEffect(() => {
     const cy = cyRef.current;
-    if (!cy) return;
-    cy.style().fromJson(stylesheet).update();
-  }, [stylesheet]);
+    if (!cy || !containerRef.current) return;
+    cy.style().fromJson(buildStylesheet(labelsVisible, readPalette(containerRef.current))).update();
+  }, [labelsVisible, schemeVersion]);
 
-  // ── Highlight wallet on prop change ────────────────────────────────────────
-  useEffect(() => {
+  const fit = useCallback(() => cyRef.current?.fit(undefined, 24), []);
+  const zoomBy = useCallback((factor) => {
     const cy = cyRef.current;
     if (!cy) return;
-    cy.elements().removeClass('focus connected dimmed search-hit');
-    if (!walletId) return;
-    const root = cy.getElementById(walletId);
-    if (root.length) {
-      root.addClass('focus');
-      root.connectedEdges().addClass('connected');
-      root.neighborhood().nodes().not(root).addClass('focus');
-      cy.elements().not(root.union(root.neighborhood())).addClass('dimmed');
-    }
-  }, [walletId, graphReady]);
-
-  // ── ResizeObserver for responsive canvas ───────────────────────────────────
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !window.ResizeObserver) return undefined;
-    const obs = new ResizeObserver(() => {
-      const cy = cyRef.current;
-      if (cy) {
-        cy.resize();
-      }
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
+    cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
   }, []);
-
-  // ── Filter toggle ─────────────────────────────────────────────────────────
-  const applyFilters = useCallback((nextFilters) => {
-    setFilters(nextFilters);
+  const focus = useCallback(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    cy.nodes().forEach((n) => {
-      n.toggleClass('dimmed', !nextFilters.has(n.data('type')));
-    });
+    const target = cy.nodes('[?isFocus]');
+    if (target.length) cy.animate({ center: { eles: target }, zoom: Math.max(cy.zoom(), 1.2), duration: 250 });
   }, []);
 
-  // ── Toolbar actions ────────────────────────────────────────────────────────
-  const handleFit = useCallback(() => cyRef.current?.fit(undefined, 40), []);
-
-  const handleCenter = useCallback(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.animate({ center: { eles: cy.elements() }, duration: 250 });
-  }, []);
-
-  const handleZoomIn = useCallback(() => {
-    const cy = cyRef.current;
-    if (cy) cy.zoom({ level: cy.zoom() * 1.25, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
-  }, []);
-
-  const handleZoomOut = useCallback(() => {
-    const cy = cyRef.current;
-    if (cy) cy.zoom({ level: cy.zoom() / 1.25, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
-  }, []);
-
-  const handleResetLayout = useCallback(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.elements().removeClass('focus connected dimmed search-hit');
-    setSelectedNodeData(null);
-    const layout = cy.layout(chooseLayout(cy.nodes().length));
-    layout.run();
-    cy.once('layoutstop', () => {
-      cy.fit(undefined, 40);
-    });
-  }, []);
-
-  const handleToggleLabels = useCallback(() => setLabelsVisible((v) => !v), []);
-
-  // ── Search ─────────────────────────────────────────────────────────────────
-  const handleSearch = useCallback(
-    (e) => {
-      e.preventDefault();
-      const cy = cyRef.current;
-      if (!cy || !searchQuery.trim()) return;
-
-      const q = searchQuery.trim().toLowerCase();
-      cy.elements().removeClass('focus connected dimmed search-hit');
-
-      const hits = cy.nodes().filter((n) => {
-        const id = String(n.data('id') || '').toLowerCase();
-        const label = String(n.data('label') || '').toLowerCase();
-        const address = String(n.data('address') || '').toLowerCase();
-        return id.includes(q) || label.includes(q) || address.includes(q);
-      });
-
-      if (!hits.length) return;
-
-      // Dim everything else
-      cy.elements().addClass('dimmed');
-      hits.forEach((n) => {
-        n.removeClass('dimmed').addClass('search-hit');
-        n.connectedEdges().removeClass('dimmed').addClass('connected');
-        n.neighborhood().nodes().removeClass('dimmed');
-      });
-
-      // Centre on first hit
-      cy.animate({ center: { eles: hits.first() }, zoom: Math.max(cy.zoom(), 1.2), duration: 400 });
-
-      // If single hit, show its details
-      if (hits.length === 1) {
-        const nd = hits.first().data();
-        setSelectedNodeData(nd);
-        onNodeSelectRef.current?.(nd);
-      }
-    },
-    [searchQuery],
-  );
-
-  const handleClearSearch = useCallback(() => {
-    setSearchQuery('');
-    const cy = cyRef.current;
-    if (!cy) return;
-    cy.elements().removeClass('focus connected dimmed search-hit');
-    setSelectedNodeData(null);
-  }, []);
-
-  // ── Dismiss details panel ──────────────────────────────────────────────────
-  const handleDismissDetails = useCallback(() => {
-    setSelectedNodeData(null);
-    cyRef.current?.elements().removeClass('focus connected dimmed search-hit');
-    onNodeSelectRef.current?.(null);
-  }, []);
-
-  // ── Guard: graph data unavailable ──────────────────────────────────────────
-  if (!data?.graph_available) {
-    return (
-      <div className="graph-state">
-        <span className="graph-state-icon">⚠️</span>
-        <p>Neo4j unavailable. The graph could not be retrieved.</p>
-      </div>
-    );
-  }
-  if (!data.nodes?.length) {
-    return (
-      <div className="graph-state">
-        <span className="graph-state-icon">🔍</span>
-        <p>No graph data available for this cluster.</p>
-      </div>
-    );
+  if (nodeCount === 0) {
+    return <div className="graph-empty">No linked wallets, transactions or IPs for this selection.</div>;
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const counts = elements.nodes.reduce((acc, n) => {
+    acc[n.data.type] = (acc[n.data.type] || 0) + 1;
+    return acc;
+  }, {});
+
   return (
-    <div className="investigation-graph">
-      {/* ── Toolbar ── */}
+    <div className="inv-graph">
       <div className="graph-toolbar">
-        <div className="toolbar-section toolbar-actions">
-          <button type="button" className="toolbar-btn" onClick={handleFit} title="Fit graph to view">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-            Fit
-          </button>
-          <button type="button" className="toolbar-btn" onClick={handleCenter} title="Center graph">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>
-            Center
-          </button>
-          <button type="button" className="toolbar-btn icon-btn" onClick={handleZoomIn} title="Zoom in" aria-label="Zoom in">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
-          </button>
-          <button type="button" className="toolbar-btn icon-btn" onClick={handleZoomOut} title="Zoom out" aria-label="Zoom out">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14"/></svg>
-          </button>
-          <button type="button" className="toolbar-btn" onClick={handleResetLayout} title="Re-run layout">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-            Reset
-          </button>
+        <div className="graph-buttons">
+          <button type="button" className="btn btn-small" onClick={fit} title="Fit graph to view">Fit</button>
+          <button type="button" className="btn btn-small" onClick={focus} title="Centre on focus node">Focus</button>
+          <button type="button" className="btn btn-small" onClick={() => zoomBy(1.25)} aria-label="Zoom in" title="Zoom in">+</button>
+          <button type="button" className="btn btn-small" onClick={() => zoomBy(0.8)} aria-label="Zoom out" title="Zoom out">−</button>
           <button
             type="button"
-            className={`toolbar-btn${labelsVisible ? ' active' : ''}`}
-            onClick={handleToggleLabels}
-            title="Toggle labels"
+            className={`btn btn-small${labelsVisible ? ' active' : ''}`}
+            aria-pressed={labelsVisible}
+            onClick={() => setLabelsVisible((v) => !v)}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
             Labels
           </button>
         </div>
-
-        {/* Search */}
-        <form className="toolbar-section toolbar-search" onSubmit={handleSearch}>
-          <input
-            type="search"
-            className="search-input"
-            placeholder="Search node…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            aria-label="Search node by name or address"
-          />
-          <button type="submit" className="toolbar-btn search-btn" title="Search">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          </button>
-          {searchQuery && (
-            <button type="button" className="toolbar-btn clear-btn" onClick={handleClearSearch} title="Clear search">✕</button>
-          )}
-        </form>
+        <span className="graph-meta">
+          {counts.Wallet || 0} wallets · {counts.Transaction || 0} txs · {counts.IP || 0} IPs
+          {data?.source && <> · source: {data.source}</>}
+          {data?.limited && <strong className="graph-limited"> · truncated</strong>}
+        </span>
       </div>
 
-      {/* ── Filters ── */}
-      <div className="graph-filters">
-        {NODE_TYPES.map((type) => {
-          const col = TYPE_COLORS[type];
-          return (
-            <label key={type} className={`filter-chip${filters.has(type) ? ' checked' : ''}`} style={{ '--chip-color': col.bg }}>
-              <input
-                type="checkbox"
-                checked={filters.has(type)}
-                onChange={() => {
-                  const next = new Set(filters);
-                  if (next.has(type)) next.delete(type);
-                  else next.add(type);
-                  applyFilters(next);
-                }}
-              />
-              <span className="chip-dot" style={{ background: col.bg }} />
-              {type}
-            </label>
-          );
-        })}
-        <span className="node-count">{nodeCount} nodes</span>
-      </div>
-
-      {/* ── Canvas + side panel ── */}
-      <div className="graph-body">
-        <div className="graph-canvas" ref={containerRef}>
-          <GraphErrorBoundary>
-            {/* Cytoscape renders directly into this container via the useEffect above */}
-          </GraphErrorBoundary>
-        </div>
-
-        {/* ── Node details panel ── */}
-        {selectedNodeData && (
-          <div className="node-details-panel" role="complementary" aria-label="Node details">
-            <div className="node-details-header">
-              <span
-                className="node-details-type"
-                style={{ background: TYPE_COLORS[selectedNodeData.type]?.bg || '#4a5a68' }}
-              >
-                {selectedNodeData.type || 'Node'}
-              </span>
-              <button
-                type="button"
-                className="node-details-close"
-                onClick={handleDismissDetails}
-                aria-label="Close details"
-              >
-                ✕
-              </button>
+      <div className="graph-stage">
+        <div className="graph-canvas" ref={containerRef} aria-label="Link analysis graph" role="img" />
+        {tooltip && (
+          <div
+            className={`graph-tooltip${tooltip.pinned ? ' pinned' : ''}`}
+            style={{ left: tooltip.x, top: tooltip.y }}
+            role="status"
+          >
+            <div className="graph-tooltip-head">
+              <strong>{tooltip.type}</strong>
+              {tooltip.pinned && (
+                <button type="button" className="icon-button" onClick={() => setTooltip(null)} aria-label="Close details">✕</button>
+              )}
             </div>
-            <div className="node-details-body">
-              {Object.entries(selectedNodeData)
-                .filter(([k]) => !['label', 'source', 'target'].includes(k))
-                .map(([key, val]) => (
-                  <div key={key} className="node-prop">
-                    <span className="node-prop-key">{key}</span>
-                    <span className="node-prop-val" title={fmtValue(val)}>
-                      {fmtValue(val)}
-                    </span>
-                  </div>
-                ))}
-            </div>
+            <code className="graph-tooltip-id">{tooltip.fullLabel || tooltip.id}</code>
+            {tooltip.type !== 'IP' && (
+              <div>
+                Risk {fmtScore(tooltip.riskScore)} {tooltip.level && <span>({tooltip.level})</span>}
+                {tooltip.isSeed && <span> · seed</span>}
+              </div>
+            )}
+            {tooltip.type === 'IP' && (tooltip.country || tooltip.asn) && (
+              <div>{[tooltip.country, tooltip.asn && `AS${tooltip.asn}`].filter(Boolean).join(' · ')}</div>
+            )}
+            {tooltip.type !== 'IP' && !tooltip.pinned && <div className="muted">Click to investigate</div>}
           </div>
         )}
       </div>
 
-      {/* ── Legend ── */}
-      <div className="graph-legend">
-        {NODE_TYPES.map((type) => {
-          const col = TYPE_COLORS[type];
-          return (
-            <span key={type} className="legend-item">
-              <span className="legend-dot" style={{ background: col.bg, border: `1.5px solid ${col.border}` }} />
-              {type}
-            </span>
-          );
-        })}
-        <span className="legend-item">
-          <span className="legend-dot legend-edge" />
-          Relationship
-        </span>
-      </div>
+      <ul className="graph-legend" aria-label="Graph legend">
+        {LEVELS.map((level) => (
+          <li key={level}><span className={`lg-dot risk-bg-${level.toLowerCase()}`} />{level}</li>
+        ))}
+        <li><span className="lg-shape lg-wallet" />Wallet</li>
+        <li><span className="lg-shape lg-tx" />Transaction</li>
+        <li><span className="lg-shape lg-ip" />IP</li>
+        <li><span className="lg-shape lg-seed" />Seed</li>
+        <li><span className="lg-shape lg-focus" />Focus</li>
+        <li><span className="lg-arrow" aria-hidden="true">→</span>Value flow</li>
+        <li><span className="lg-dash" aria-hidden="true" />Observed at IP</li>
+      </ul>
     </div>
   );
 }

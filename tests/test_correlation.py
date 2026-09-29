@@ -1,111 +1,41 @@
-from backend.correlation.service import build_correlation_index, correlate_ip_to_wallet, correlate_wallets, get_related_transactions
+from backend.correlation.flows import build_flow_index
+from backend.correlation.network import build_network_correlation
 
 
-def test_correlation_index_builds_successfully():
-    records = []
-    for i in range(3):
-        records.append({
-            "timestamp": f"2024-01-01T00:00:{i:02d}+00:00",
-            "src_ip": "203.0.113.10",
-            "dst_ip": "198.51.100.10",
-            "src_port": 8333,
-            "dst_port": 8333,
-            "txid": f"tx_{i}",
-            "input_addresses": [f"wallet_{i}"],
-            "output_addresses": [f"wallet_{i+1}"],
-            "input_amounts": [1.0],
-            "output_amounts": [1.0],
-            "fee": 0.0,
-            "script_type": "P2WPKH",
-            "geo_country": "US",
-            "asn": 64512,
-            "behavior_type": "NORMAL",
-        })
-    index = build_correlation_index(records)
-    assert "wallet_map" in index
-    assert len(index["transaction_wallet_map"]) == 3
+def _tx(txid, ts, inputs, outputs, input_amounts, output_amounts, src_ip="8.8.8.8", dst_port=8333, asn=15169, country="US"):
+    return {"timestamp": ts, "txid": txid, "src_ip": src_ip, "dst_ip": "1.1.1.1", "src_port": 40000, "dst_port": dst_port,
+            "input_addresses": inputs, "output_addresses": outputs, "input_amounts": input_amounts, "output_amounts": output_amounts,
+            "fee": 0.0, "asn": asn, "geo_country": country}
 
 
-def test_ip_to_wallet_correlation_is_numeric():
-    records = [{
-        "timestamp": "2024-01-01T00:00:00+00:00",
-        "src_ip": "203.0.113.10",
-        "dst_ip": "198.51.100.10",
-        "src_port": 8333,
-        "dst_port": 8333,
-        "txid": "tx_1",
-        "input_addresses": ["wallet_alpha"],
-        "output_addresses": ["wallet_beta"],
-        "input_amounts": [1.0],
-        "output_amounts": [1.0],
-        "fee": 0.0,
-        "script_type": "P2WPKH",
-        "geo_country": "US",
-        "asn": 64512,
-        "behavior_type": "NORMAL",
-    }]
-    index = build_correlation_index(records)
-    score = correlate_ip_to_wallet("203.0.113.10", "wallet_alpha", index)
-    assert score in (0.0, 1.0)
+RECORDS = [
+    _tx("b", "2024-01-01T01:00:00+00:00", ["a"], ["c", "d"], [1.0], [0.6, 0.39], src_ip="9.9.9.9", dst_port=9050, asn=19281, country="CH"),
+    _tx("a", "2024-01-01T00:00:00+00:00", ["x", "y"], ["a"], [0.5, 0.6], [1.0]),
+    _tx("c", "2024-01-01T02:00:00+00:00", ["c"], ["e"], [0.6], [0.59]),
+]
 
 
-def test_wallet_overlap_score_is_numeric():
-    records = [{
-        "timestamp": "2024-01-01T00:00:00+00:00",
-        "src_ip": "203.0.113.10",
-        "dst_ip": "198.51.100.10",
-        "src_port": 8333,
-        "dst_port": 8333,
-        "txid": "tx_1",
-        "input_addresses": ["wallet_alpha"],
-        "output_addresses": ["wallet_beta"],
-        "input_amounts": [1.0],
-        "output_amounts": [1.0],
-        "fee": 0.0,
-        "script_type": "P2WPKH",
-        "geo_country": "US",
-        "asn": 64512,
-        "behavior_type": "NORMAL",
-    }, {
-        "timestamp": "2024-01-01T00:05:00+00:00",
-        "src_ip": "203.0.113.11",
-        "dst_ip": "198.51.100.11",
-        "src_port": 8333,
-        "dst_port": 8333,
-        "txid": "tx_2",
-        "input_addresses": ["wallet_alpha"],
-        "output_addresses": ["wallet_gamma"],
-        "input_amounts": [1.2],
-        "output_amounts": [1.2],
-        "fee": 0.0,
-        "script_type": "P2WPKH",
-        "geo_country": "US",
-        "asn": 64512,
-        "behavior_type": "NORMAL",
-    }]
-    index = build_correlation_index(records)
-    score = correlate_wallets("wallet_alpha", "wallet_beta", index)
-    assert 0.0 <= score <= 1.0
+def test_flow_index_is_chronological_with_aligned_amounts():
+    flows = build_flow_index(RECORDS)
+    assert [tx.txid for tx in flows.txs] == ["a", "b", "c"]
+    assert flows.txs[0].inputs == [("x", 0.5), ("y", 0.6)]
+    assert flows.next_spend("a", flows.txs[0].ts).txid == "b"
+    assert flows.next_spend("e", 0) is None
+    assert flows.is_fresh_output("c", flows.txs[1]) and not flows.is_fresh_output("a", flows.txs[1])
 
 
-def test_related_transactions_are_returned():
-    records = [{
-        "timestamp": "2024-01-01T00:00:00+00:00",
-        "src_ip": "203.0.113.10",
-        "dst_ip": "198.51.100.10",
-        "src_port": 8333,
-        "dst_port": 8333,
-        "txid": "tx_1",
-        "input_addresses": ["wallet_alpha"],
-        "output_addresses": ["wallet_beta"],
-        "input_amounts": [1.0],
-        "output_amounts": [1.0],
-        "fee": 0.0,
-        "script_type": "P2WPKH",
-        "geo_country": "US",
-        "asn": 64512,
-        "behavior_type": "NORMAL",
-    }]
-    index = build_correlation_index(records)
-    txs = get_related_transactions("wallet_alpha", index)
-    assert txs == ["tx_1"]
+def test_unaligned_amounts_are_split_evenly():
+    flows = build_flow_index([_tx("t", "2024-01-01T00:00:00+00:00", ["p", "q"], ["r"], [2.0], [1.9])])
+    assert flows.txs[0].inputs == [("p", 1.0), ("q", 1.0)]
+
+
+def test_network_evidence_is_attributed_to_spenders():
+    network = build_network_correlation(build_flow_index(RECORDS))
+    assert set(network.wallets) == {"x", "y", "a", "c"}  # receivers of outputs reveal nothing
+    footprint = network.wallets["a"]
+    assert dict(footprint.ips) == {"9.9.9.9": 1} and footprint.nonstandard_port_ratio == 1.0
+    assert dict(footprint.countries) == {"CH": 1} and dict(footprint.asns) == {19281: 1}
+    assert network.shared_ip_wallets("x") == 2          # y and c also broadcast from 8.8.8.8
+    association = network.ip_associations("a")[0]
+    assert association["ip"] == "9.9.9.9" and association["exclusivity"] == 1.0 and association["association"] == 1.0
+    assert ("8.8.8.8", {"x", "y", "c"}) in network.ip_links()

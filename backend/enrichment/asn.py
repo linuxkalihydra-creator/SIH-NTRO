@@ -22,7 +22,13 @@ DEFAULT_ASN_DB = "data/geoip/GeoLite2-ASN.mmdb"
 
 def asn_db_path(db_path: str | Path | None = None) -> Path:
     """Return the configured GeoLite2-ASN path: argument, then $GEOIP_ASN_DB, then the default."""
-    return Path(db_path or os.getenv(ASN_DB_ENV) or DEFAULT_ASN_DB)
+    if db_path or os.getenv(ASN_DB_ENV):
+        return Path(db_path or os.getenv(ASN_DB_ENV))
+    # GeoLite2 (MaxMind account needed) or the account-free DB-IP Lite download (scripts/download_geoip.py).
+    for candidate in (DEFAULT_ASN_DB, "data/geoip/dbip-asn-lite.mmdb"):
+        if Path(candidate).exists():
+            return Path(candidate)
+    return Path(DEFAULT_ASN_DB)
 
 
 class ASNAdapter:
@@ -41,7 +47,10 @@ class ASNAdapter:
 
     @property
     def source_name(self) -> str:
-        return "geolite2" if self._reader is not None else "local_asn"
+        if self._reader is None:
+            return "local_asn"
+        database_type = str(self._reader.metadata().database_type).lower()
+        return "dbip" if database_type.startswith("dbip") else "geolite2"
 
     def _load_local_database(self) -> None:
         """Open the local database if it exists; otherwise stay in fallback mode."""

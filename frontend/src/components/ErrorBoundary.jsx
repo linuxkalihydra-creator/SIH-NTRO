@@ -1,6 +1,6 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
 
+/** Catches render errors so a single broken view never blanks the workspace. */
 export default class ErrorBoundary extends React.Component {
   state = { error: null };
 
@@ -10,9 +10,7 @@ export default class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     if (import.meta.env.DEV) {
-      console.error('FRONTEND RENDER ERROR', error.message);
-      console.error('RENDER STACK', error.stack);
-      console.error('COMPONENT STACK', info.componentStack);
+      console.error('Render error:', error?.message, info?.componentStack);
     }
   }
 
@@ -20,19 +18,17 @@ export default class ErrorBoundary extends React.Component {
 
   render() {
     if (!this.state.error) return this.props.children;
-
     return (
-      <main className="application-error" role="alert">
-        <h1>Something went wrong</h1>
-        <p>The page could not be displayed. You can try rendering it again or return to the dashboard.</p>
-        <div className="application-error-actions">
-          <button type="button" onClick={this.retry}>Retry</button>
-          <Link to="/">Return to Dashboard</Link>
+      <div className={`status-box status-error${this.props.compact ? '' : ' app-error'}`} role="alert">
+        <div>
+          <p className="status-title">This view could not be displayed</p>
+          <div className="status-body">
+            The rest of the workspace is still usable.
+            {import.meta.env.DEV && this.state.error?.message && <code className="error-code">{this.state.error.message}</code>}
+          </div>
         </div>
-        {import.meta.env.DEV && (
-          <small>Development error: {this.state.error?.message || 'Unknown error'}</small>
-        )}
-      </main>
+        <button type="button" className="btn btn-small" onClick={this.retry}>Retry</button>
+      </div>
     );
   }
 }

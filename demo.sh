@@ -16,17 +16,23 @@ echo "Bitcoin Investigation Platform - Demo"
 echo "========================================="
 echo ""
 
-# Step 1: Generate synthetic data
+# Step 1: Generate synthetic data (the committed dataset is regenerated identically with --seed 42)
 echo "[1/5] Generating synthetic transaction data..."
 mkdir -p "$DATA_DIR"
-uv run python scripts/generate_dataset.py --records 5000
-echo "✓ Generated 5000 synthetic transactions"
+uv run python scripts/generate_dataset.py --records 10000 --seed 42 --output-dir "$DATA_DIR"
+echo "✓ Generated 10000 synthetic transactions, ground truth and seed list"
 echo ""
+
+# Offline GeoIP: download the open DB-IP Lite databases once if no .mmdb is present yet.
+if ! ls "$PROJECT_DIR"/data/geoip/*.mmdb >/dev/null 2>&1; then
+  echo "Downloading DB-IP Lite GeoIP databases (one-time, needs internet)..."
+  uv run python scripts/download_geoip.py || echo "GeoIP download failed; continuing with the dataset's own country/ASN fields"
+fi
 
 # Step 2: Run analysis pipeline
 echo "[2/5] Running analysis pipeline..."
 mkdir -p "$OUTPUT_DIR"
-uv run python scripts/run_analysis.py --input "$DATA_DIR/transactions.csv" --output-dir "$OUTPUT_DIR"
+uv run python scripts/run_analysis.py --input "$DATA_DIR/transactions.csv" --seeds "$DATA_DIR/seed_wallets.txt" --output-dir "$OUTPUT_DIR"
 echo "✓ Pipeline analysis complete"
 echo ""
 

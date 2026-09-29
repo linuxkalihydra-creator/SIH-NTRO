@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from ipaddress import IPv4Address
+from ipaddress import ip_address
 from typing import Any
 
 REQUIRED_FIELDS = (
@@ -31,6 +31,8 @@ SUPPORTED_BEHAVIORS = {
     "LAYERING_LIKE",
     "MIXING_LIKE",
     "HIGH_NETWORK_DIVERSITY",
+    "PEELING_CHAIN",
+    "RANSOMWARE",
 }
 
 
@@ -48,9 +50,9 @@ def validate_record(record: dict[str, Any]) -> list[str]:
 
     for ip_key in ("src_ip", "dst_ip"):
         try:
-            IPv4Address(str(record.get(ip_key, "")))
+            ip_address(str(record.get(ip_key, "")))
         except ValueError:
-            errors.append(f"Invalid IPv4 address in {ip_key}")
+            errors.append(f"Invalid IP address in {ip_key}")
 
     for port_key in ("src_port", "dst_port"):
         port_value = record.get(port_key)

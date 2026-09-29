@@ -119,7 +119,11 @@ class DatasetStore:
         return self._directory(dataset_id) / "analysis.json"
 
     def save_snapshot(self, dataset_id: str, snapshot: dict[str, Any]) -> None:
-        self.snapshot_path(dataset_id).write_text(json.dumps(snapshot, indent=2, default=str), encoding="utf-8")
+        # Written to a temporary file first so a reader never sees a half-written snapshot.
+        path = self.snapshot_path(dataset_id)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(snapshot, separators=(",", ":"), default=str), encoding="utf-8")
+        temporary.replace(path)
 
     def load_snapshot(self, dataset_id: str) -> dict[str, Any] | None:
         try:

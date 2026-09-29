@@ -1,98 +1,97 @@
 /**
  * API client for the Bitcoin Investigation Platform backend.
- * Provides centralized HTTP communication with error handling.
+ *
+ * One function per endpoint documented in docs/api.md. Every function resolves
+ * to the response body (not the axios response) and accepts an optional
+ * AbortSignal as its last argument so callers can cancel stale requests.
  */
 
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
-const client = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 15000,
-});
+const http = axios.create({ baseURL: API_BASE_URL, timeout: 30000 });
 
-// The existing analysis endpoint is synchronous, so it must not be cut off while
-// the backend is still processing a legitimate large upload. Axios treats 0 as no timeout.
+// Analysis is synchronous on the backend and can take a minute or more on
+// large datasets; axios treats 0 as "no timeout".
 const ANALYSIS_TIMEOUT_MS = 0;
 const UPLOAD_TIMEOUT_MS = 300000;
 
-export function apiErrorMessage(error, operation = 'Request') {
-  if (error?.code === 'ECONNABORTED') return `${operation} timed out. Analysis may still be running; check the dataset status and retry if needed.`;
-  if (!error?.response) return 'Backend unavailable. Check that the API is running and try again.';
+const body = (promise) => promise.then((response) => response.data);
+const enc = encodeURIComponent;
 
-  const status = error.response.status;
-  const detail = error.response.data?.detail;
-  if (status === 400) return typeof detail === 'string' ? detail : 'Dataset format invalid.';
-  if (status === 404) return 'Dataset not found.';
-  if (status === 409) return 'Dataset analysis is not complete yet.';
-  if (status === 413) return 'Dataset is too large to upload.';
-  if (status === 422) return 'The request data is invalid.';
-  if (status === 502 || status === 503) return 'Neo4j or the backend is unavailable.';
-  if (status >= 500) return 'Unknown server error. Please try again.';
-  return `${operation} failed.`;
+/** True when the request was cancelled through an AbortSignal. */
+export const isCancelled = (error) => axios.isCancel(error) || error?.code === 'ERR_CANCELED';
+
+/** True when the backend reports that the dataset has not been analysed yet. */
+export const isNotAnalysed = (error) => error?.response?.status === 409;
+
+/** Human-readable message that prefers the backend's `detail`. */
+export function apiErrorMessage(error, operation = 'Request') {
+  if (!error) return '';
+  if (error.code === 'ECONNABORTED') return `${operation} timed out.`;
+  if (!error.response) return 'Backend unreachable. Check that the API is running.';
+  const { status, data } = error.response;
+  const detail = data?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    return detail.map((item) => item?.msg || JSON.stringify(item)).join('; ');
+  }
+  if (status === 404) return 'Not found.';
+  if (status === 409) return 'This dataset has not been analysed yet.';
+  if (status === 413) return 'File is too large to upload.';
+  if (status >= 500) return `${operation} failed on the server (HTTP ${status}).`;
+  return `${operation} failed (HTTP ${status}).`;
 }
 
-export const api = {
-  health: async () => {
-    return client.get('/health');
-  },
+// ── Datasets ──────────────────────────────────────────────────────────────
+export const getHealth = (signal) => body(http.get('/health', { signal }));
 
-  datasets: async (config = {}) => client.get('/datasets', config),
-  stats: async (datasetId, config = {}) => {
-    return client.get('/stats', { ...config, params: { ...config.params, ...(datasetId ? { dataset_id: datasetId } : {}) } });
-  },
+export const listDatasets = (signal) => body(http.get('/datasets', { signal }));
 
-  analyze: async (path, outputDir = null, contamination = 0.05, randomState = 42, datasetId = null) => {
-    const payload = {
-      contamination,
-      random_state: randomState,
-      ...(datasetId ? { dataset_id: datasetId } : {}),
-      ...(path ? { path } : {}),
-      ...(outputDir ? { output_dir: outputDir } : {}),
-    };
-    return client.post('/analyze', payload, { timeout: ANALYSIS_TIMEOUT_MS });
-  },
+export function uploadDataset(file, signal) {
+  const form = new FormData();
+  form.append('file', file);
+  return body(http.post('/datasets/upload', form, { signal, timeout: UPLOAD_TIMEOUT_MS }));
+}
 
-  uploadDataset: async (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    return client.post('/datasets/upload', formData, { timeout: UPLOAD_TIMEOUT_MS });
-  },
+export const analyzeDataset = (datasetId, seedWallets, signal) =>
+  body(http.post(
+    '/analyze',
+    { dataset_id: datasetId, ...(Array.isArray(seedWallets) ? { seed_wallets: seedWallets } : {}) },
+    { signal, timeout: ANALYSIS_TIMEOUT_MS },
+  ));
 
-  alerts: async (datasetId, config = {}) => {
-    return client.get('/alerts', { ...config, params: { ...config.params, ...(datasetId ? { dataset_id: datasetId } : {}) } });
-  },
+export const updateSeeds = (datasetId, seedWallets, signal) =>
+  body(http.put(`/datasets/${enc(datasetId)}/seeds`, { seed_wallets: seedWallets }, { signal, timeout: ANALYSIS_TIMEOUT_MS }));
 
-  alertForWallet: async (walletId, datasetId, config = {}) => {
-    return client.get(`/alerts/${walletId}`, { ...config, params: { ...config.params, dataset_id: datasetId } });
-  },
+// ── Overview ──────────────────────────────────────────────────────────────
+export const getOverview = (datasetId, signal) =>
+  body(http.get('/overview', { params: { dataset_id: datasetId }, signal }));
 
-  entity: async (walletId, datasetId, config = {}) => {
-    return client.get(`/entities/${walletId}`, { ...config, params: { ...config.params, dataset_id: datasetId } });
-  },
+// ── Leads ─────────────────────────────────────────────────────────────────
+export const getWalletAlerts = (datasetId, { limit, level } = {}, signal) =>
+  body(http.get('/alerts', { params: { dataset_id: datasetId, limit, level }, signal }));
 
-  entityEvidence: async (walletId, datasetId, config = {}) => {
-    return client.get(`/entities/${walletId}/evidence`, { ...config, params: { ...config.params, dataset_id: datasetId } });
-  },
+export const getTransactionAlerts = (datasetId, { limit, level } = {}, signal) =>
+  body(http.get('/alerts/transactions', { params: { dataset_id: datasetId, limit, level }, signal }));
 
-  entityGraph: async (walletId, datasetId, depth = 2, config = {}) => {
-    return client.get(`/entities/${walletId}/graph`, { ...config, params: { ...config.params, dataset_id: datasetId, depth } });
-  },
+export const getPatterns = (datasetId, { type } = {}, signal) =>
+  body(http.get('/patterns', { params: { dataset_id: datasetId, type }, signal }));
 
-  entityTransactions: async (walletId, datasetId, config = {}) => {
-    return client.get(`/entities/${walletId}/transactions`, { ...config, params: { ...config.params, dataset_id: datasetId } });
-  },
+export const getClusters = (datasetId, signal) =>
+  body(http.get('/clusters', { params: { dataset_id: datasetId }, signal }));
 
-  clusters: async (datasetId, config = {}) => {
-    return client.get('/clusters', { ...config, params: { ...config.params, ...(datasetId ? { dataset_id: datasetId } : {}) } });
-  },
+// ── Detail ────────────────────────────────────────────────────────────────
+export const getWallet = (datasetId, walletId, signal) =>
+  body(http.get(`/wallets/${enc(walletId)}`, { params: { dataset_id: datasetId }, signal }));
 
-  clusterGraph: async (datasetId, clusterId, config = {}) => client.get(`/datasets/${datasetId}/clusters/${clusterId}/graph`, config),
+export const getTransaction = (datasetId, txid, signal) =>
+  body(http.get(`/transactions/${enc(txid)}`, { params: { dataset_id: datasetId }, signal }));
 
-  ingest: async (path) => {
-    return client.post('/ingest', { path });
-  },
-};
-
-export default api;
+// ── Graph ─────────────────────────────────────────────────────────────────
+export const getGraph = (datasetId, { focusType, focusId, depth } = {}, signal) =>
+  body(http.get('/graph', {
+    params: { dataset_id: datasetId, focus_type: focusType, focus_id: focusId, depth },
+    signal,
+  }));

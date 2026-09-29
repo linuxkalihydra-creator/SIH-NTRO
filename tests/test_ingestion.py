@@ -51,7 +51,7 @@ def test_summary_reports_metrics():
 def test_load_dataset_accepts_unlabeled_records_without_geo_or_asn(minimal_csv_path):
     records, summary = load_dataset(minimal_csv_path, include_summary=True)
     assert summary["invalid_records"] == 0
-    assert len(records) == 300
+    assert len(records) == 1500
     assert all(record["behavior_type"] == "" for record in records)
 
 
