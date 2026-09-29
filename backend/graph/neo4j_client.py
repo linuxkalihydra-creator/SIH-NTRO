@@ -281,10 +281,9 @@ class Neo4jClient:
             internal_ids = [row["internal_id"] for row in node_rows]
             edge_result = session.run(
                 """
-                UNWIND $internal_ids AS node_id
-                MATCH (source)-[relationship]-(target)
+                MATCH (source)-[relationship]->(target)
                 WHERE elementId(source) IN $internal_ids AND elementId(target) IN $internal_ids
-                WITH DISTINCT relationship, source, target
+                WITH relationship, source, target
                 LIMIT $max_edges
                 RETURN elementId(relationship) AS relationship_id,
                        elementId(source) AS source_internal_id,
@@ -355,10 +354,9 @@ class Neo4jClient:
                 return {"graph_available": True, "nodes": [], "edges": []}
             internal_ids = [row["internal_id"] for row in node_rows]
             edge_rows = list(session.run("""
-                UNWIND $internal_ids AS node_id
-                MATCH (source)-[relationship]-(target)
+                MATCH (source)-[relationship]->(target)
                 WHERE elementId(source) IN $internal_ids AND elementId(target) IN $internal_ids
-                WITH DISTINCT relationship, source, target LIMIT $max_edges
+                WITH relationship, source, target LIMIT $max_edges
                 RETURN elementId(relationship) AS relationship_id, elementId(source) AS source_internal_id,
                        elementId(target) AS target_internal_id, type(relationship) AS relationship_type,
                        properties(relationship) AS relationship_properties

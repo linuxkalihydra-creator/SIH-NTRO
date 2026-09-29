@@ -88,3 +88,36 @@ def test_persist_graph_writes_output_to_edges_in_neo4j():
     finally:
         client.clear_dataset_graph(dataset_id)
         client.close()
+
+
+def test_neighborhood_returns_each_relationship_once_in_stored_direction():
+    import uuid
+
+    import pytest
+
+    from backend.graph.neo4j_client import Neo4jClient, Neo4jUnavailableError
+
+    client = Neo4jClient()
+    try:
+        client.connect()
+    except Neo4jUnavailableError:
+        pytest.skip("Neo4j is not reachable")
+
+    dataset_id = f"test_neighborhood_{uuid.uuid4().hex}"
+    records = [
+        {"timestamp": "2024-01-01T00:00:00+00:00", "src_ip": "203.0.113.10", "dst_ip": "198.51.100.10", "txid": "tx_1",
+         "input_addresses": ["wallet_a"], "output_addresses": ["wallet_b", "wallet_c"], "input_amounts": [1.0], "output_amounts": [0.5, 0.49],
+         "geo_country": "US", "asn": 64512},
+    ]
+    try:
+        client.persist_graph(build_transaction_graph(records), dataset_id=dataset_id)
+        for graph in (client.get_neighborhood(dataset_id, "wallet_a", depth=2), client.get_cluster_graph(dataset_id, ["wallet_a"])):
+            edge_ids = [edge["id"] for edge in graph["edges"]]
+            assert edge_ids and len(edge_ids) == len(set(edge_ids))
+            directed = {(edge["type"], edge["source"], edge["target"]) for edge in graph["edges"]}
+            assert ("INPUT_FROM", "wallet_a", "tx_1") in directed
+            assert ("OUTPUT_TO", "tx_1", "wallet_b") in directed
+            assert ("INPUT_FROM", "tx_1", "wallet_a") not in directed
+    finally:
+        client.clear_dataset_graph(dataset_id)
+        client.close()

@@ -1,0 +1,13 @@
+{
+  "dataset_id": "dataset_2520d53d4f944c1184d64790277945c4",
+  "filename": "transactions.csv",
+  "format": "csv",
+  "size_bytes": 19,
+  "created_at": "2026-09-29T09:11:08.190952+00:00",
+  "updated_at": "2026-09-29T09:11:08.190974+00:00",
+  "status": "uploaded",
+  "record_count": null,
+  "analysis_status": "not_started",
+  "error_message": null,
+  "source_path": "data/raw/uploads/dataset_2520d53d4f944c1184d64790277945c4/source.csv"
+}
