@@ -66,7 +66,7 @@ class AnomalyEnsemble:
             # Trained on at most 6000 rows: anomalies are rare, so a sample describes normal behaviour as well.
             sample = z if len(z) <= 6000 else z[np.random.default_rng(self.random_state).choice(len(z), 6000, replace=False)]
             self.autoencoder = MLPRegressor(hidden_layer_sizes=(hidden, bottleneck, hidden), activation="tanh", alpha=1e-3,
-                                            learning_rate_init=3e-3, batch_size=256, max_iter=200, early_stopping=len(sample) >= 50,
+                                            learning_rate_init=3e-3, batch_size="auto", max_iter=200, early_stopping=len(sample) >= 50,
                                             n_iter_no_change=8, random_state=self.random_state).fit(sample, sample)
         self.ecod_sorted = np.sort(z, axis=0)
         skews = np.nan_to_num(skew(z, axis=0), nan=0.0)

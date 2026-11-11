@@ -3,8 +3,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 build/
-dist/
 wheels/
+/dist/
 
 # Test and lint caches
 .pytest_cache/
@@ -16,7 +16,8 @@ htmlcov/
 # Virtual environments
 .venv/
 
-# Node dependencies, frontend build output and logs
+# Node dependencies and logs. The built dashboard (frontend/dist) IS committed:
+# FastAPI serves it, so an offline deployment needs no Node.js.
 node_modules/
 dist-ssr/
 *.log
@@ -30,8 +31,13 @@ dist-ssr/
 data/raw/uploads/
 data/processed/
 
-# Local GeoLite2 databases (MaxMind license: do not commit)
+# Local GeoIP databases (downloaded by scripts/download_geoip.py; MaxMind's licence forbids redistribution)
 data/geoip/*.mmdb
+
+# Air-gap bundle build output
+offline-bundle/
+wheelhouse/
+.deps/
 
 # Editors and IDEs
 .vscode/

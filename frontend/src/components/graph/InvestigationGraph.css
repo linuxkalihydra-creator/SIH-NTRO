@@ -41,36 +41,42 @@
   height: 440px;
 }
 
+.graph-canvas.tall {
+  height: min(760px, 82vh);
+}
+
 @media (max-width: 720px) {
   .graph-canvas {
     height: 320px;
+  }
+  .graph-canvas.tall {
+    height: 520px;
   }
 }
 
 .graph-tooltip {
   position: absolute;
   z-index: 5;
-  transform: translate(-50%, calc(-100% - 16px));
-  max-width: min(280px, 90%);
-  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: max-content;
+  max-width: min(290px, 90%);
+  padding: 6px 9px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.4;
   pointer-events: none;
 }
 
-.graph-tooltip.pinned {
-  pointer-events: auto;
-}
-
 .graph-tooltip-head {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
 }
 
 .graph-tooltip-id {
@@ -113,17 +119,41 @@
 .lg-tx { width: 12px; height: 9px; border-radius: 2px; }
 .lg-ip { width: 9px; height: 9px; transform: rotate(45deg); background: var(--graph-ip); }
 .lg-seed { border-radius: 50%; border: 3px solid var(--seed-border); }
-.lg-focus { width: 15px; height: 15px; border-radius: 50%; box-shadow: 0 0 0 3px var(--accent-soft); }
+.lg-focus { width: 13px; height: 13px; margin: 0 3px; border-radius: 50%; box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.lg-service {
+  margin: 0 3px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--graph-bg), 0 0 0 3.5px var(--text-muted);
+}
+
+.lg-stopped {
+  margin: 0 3px;
+  border-radius: 50%;
+  outline: 2px dashed var(--text);
+  outline-offset: 2px;
+}
+
+.lg-relay {
+  width: 9px;
+  height: 9px;
+  margin: 0 2px;
+  transform: rotate(45deg);
+  border: 1.5px dashed var(--text-muted);
+}
 
 .lg-arrow {
   font-size: 13px;
   line-height: 1;
 }
 
-.lg-dash {
-  width: 16px;
-  border-top: 1.5px dashed var(--graph-edge);
+.lg-line {
+  width: 18px;
+  height: 0;
 }
+
+.lg-dash { border-top: 1.5px dashed var(--graph-edge); }
+.lg-dots { border-top: 1.5px dotted var(--graph-edge); }
 
 .graph-empty {
   padding: 24px;

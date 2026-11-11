@@ -23,6 +23,7 @@ class AnalysisResult:
     errors: list[str] = field(default_factory=list)
     graph_available: bool = False
     output_dir: str = "data/processed"
+    stage_seconds: dict[str, float] = field(default_factory=dict)
 
     @property
     def overview(self) -> dict[str, Any]:
