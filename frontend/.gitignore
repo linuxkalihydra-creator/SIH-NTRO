@@ -8,7 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# dist is committed on purpose: the API serves it, so running the platform needs no Node.js
 dist-ssr
 *.local
 

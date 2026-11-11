@@ -1,7 +1,7 @@
 /** Small presentational building blocks used throughout the workspace. */
 
 import { useEffect, useRef, useState } from 'react';
-import { apiErrorMessage, isNotAnalysed } from '../api/client.js';
+import { apiErrorMessage, isNotAnalysed, isNotFound } from '../api/client.js';
 import { fmtPct, isNum, normLevel, truncateId } from '../lib/format.js';
 
 const SHORT_LEVEL = { CRITICAL: 'CRIT', HIGH: 'HIGH', MEDIUM: 'MED', LOW: 'LOW' };
@@ -79,8 +79,8 @@ export function IdText({ id, head = 8, tail = 6, copy = true }) {
   );
 }
 
-/** A clickable id that navigates the investigation panel. */
-export function EntityLink({ type, id, onSelect, level, head = 8, tail = 6, data }) {
+/** A clickable id that navigates the investigation panel (wallet, transaction, actor, ip, pattern). */
+export function EntityLink({ type, id, onSelect, level, head = 8, tail = 6, data, copy = true, children }) {
   if (id === null || id === undefined || id === '') return <span className="muted">—</span>;
   const norm = normLevel(level);
   return (
@@ -88,18 +88,43 @@ export function EntityLink({ type, id, onSelect, level, head = 8, tail = 6, data
       <button
         type="button"
         className={`entity-link${norm ? ` level-${norm.toLowerCase()}` : ''}`}
-        title={`Investigate ${type} ${id}`}
+        title={`Open ${type === 'ip' ? 'IP' : type} ${id}`}
         onClick={(event) => {
           event.stopPropagation();
           onSelect?.({ type, id: String(id), data });
         }}
       >
         {norm && <span className={`dot risk-dot-${norm.toLowerCase()}`} aria-hidden="true" />}
-        <code>{truncateId(id, head, tail)}</code>
+        <code>{children || truncateId(id, head, tail)}</code>
       </button>
-      <CopyButton text={id} />
+      {copy && <CopyButton text={id} />}
     </span>
   );
+}
+
+const TAGS = {
+  seed: { label: 'SEED', short: 'SEED', className: 'seed-tag', title: 'Known illicit seed wallet supplied by the investigator' },
+  'cash-out': { label: 'cash-out point', short: 'cash-out', className: 'tag tag-cashout', title: 'Dirty funds arriving at a service-like entity: the service can identify the depositor' },
+  structure: { label: 'in a structure', short: 'structure', className: 'tag tag-structure', title: 'Inside a detected laundering structure' },
+  service: { label: 'service-like', short: 'service', className: 'tag tag-service', title: 'Its entity deals with many counterparties (exchange, merchant or processor)' },
+};
+const TAG_ORDER = Object.keys(TAGS);
+
+/**
+ * Lead tags from the backend (`seed`, `cash-out`, `structure`, `service`).
+ * `single` shows only the most telling one, for dense lists; its tooltip names the rest.
+ */
+export function Tags({ tags, skipSeed = false, single = false }) {
+  const list = TAG_ORDER.filter((tag) => (Array.isArray(tags) ? tags : []).includes(tag) && !(skipSeed && tag === 'seed'));
+  if (!list.length) return null;
+  if (single) {
+    const [first, ...rest] = list;
+    const title = [TAGS[first].title, ...rest.map((tag) => `Also: ${TAGS[tag].label}`)].join('. ');
+    return <span className={TAGS[first].className} title={title}>{TAGS[first].short}{rest.length > 0 && <span className="tag-more">+{rest.length}</span>}</span>;
+  }
+  return list.map((tag) => (
+    <span key={tag} className={TAGS[tag].className} title={TAGS[tag].title}>{TAGS[tag].label}</span>
+  ));
 }
 
 export function StatusBox({ kind = 'empty', title, children, action }) {
@@ -116,12 +141,15 @@ export function StatusBox({ kind = 'empty', title, children, action }) {
 }
 
 /** Loading / error / empty wrapper around a useApi result. */
-export function ApiState({ result, loadingText = 'Loading…', empty, emptyText = 'Nothing to show.', operation, children }) {
+export function ApiState({ result, loadingText = 'Loading…', empty, emptyText = 'Nothing to show.', operation, notFoundText, children }) {
   if (result.status === 'idle') return null;
   if (result.status === 'loading') return <StatusBox kind="loading" title={loadingText} />;
   if (result.status === 'error') {
     if (isNotAnalysed(result.error)) {
       return <StatusBox kind="empty" title="Not analysed yet">Run the analysis to generate this view.</StatusBox>;
+    }
+    if (notFoundText && isNotFound(result.error)) {
+      return <StatusBox kind="empty" title="Not in this dataset">{notFoundText}</StatusBox>;
     }
     return (
       <StatusBox
@@ -168,33 +196,89 @@ export function Tabs({ tabs, active, onChange, label, size = 'normal' }) {
   );
 }
 
-/** Stacked 100% bar of risk levels with a direct-labelled legend. */
-export function RiskDistribution({ distribution, label = 'Wallet risk distribution' }) {
-  const levels = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
-  const counts = levels.map((level) => ({ level, count: isNum(distribution?.[level]) ? distribution[level] : 0 }));
-  const total = counts.reduce((acc, item) => acc + item.count, 0);
-  if (!total) return null;
+/** Mutually exclusive choice rendered as a row of toggle buttons. */
+export function Segmented({ options, value, onChange, label }) {
   return (
-    <figure className="risk-dist" aria-label={label}>
-      <figcaption>{label}</figcaption>
-      <div className="stack-bar" role="img" aria-label={counts.map((c) => `${c.level} ${c.count}`).join(', ')}>
-        {counts.filter((c) => c.count > 0).map((c) => (
-          <span
-            key={c.level}
-            className={`stack-seg risk-bg-${c.level.toLowerCase()}`}
-            style={{ flexGrow: c.count, minWidth: 3 }}
-            title={`${c.level}: ${c.count.toLocaleString()} (${fmtPct(c.count / total, 1)})`}
-          />
-        ))}
+    <div className="segmented" role="group" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className={`segment${option.value === value ? ' active' : ''}`}
+          aria-pressed={option.value === value}
+          title={option.title}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A page section that can be folded away. `open` / `onToggle` are controlled so the
+ * state can live in the URL; children are only rendered while it is open.
+ */
+export function Collapsible({ title, hint, open, onToggle, children, className = '', id }) {
+  return (
+    <details
+      id={id}
+      className={`panel fold ${className}`.trim()}
+      open={open}
+      onToggle={(event) => {
+        if (event.currentTarget.open !== open) onToggle(event.currentTarget.open);
+      }}
+    >
+      <summary>
+        <h2>{title}</h2>
+        {hint && <span className="muted small">{hint}</span>}
+      </summary>
+      {open && <div className="fold-body">{children}</div>}
+    </details>
+  );
+}
+
+/** Label + large figure + optional sub-line (the stat-tile contract). */
+export function Stat({ label, value, sub, title, tone }) {
+  return (
+    <div className="kpi" title={title}>
+      <span className="kpi-label">{label}</span>
+      <span className={`kpi-value${tone ? ` kpi-${tone}` : ''}`}>{value}</span>
+      {sub && <span className="kpi-sub">{sub}</span>}
+    </div>
+  );
+}
+
+/** Modal confirmation for destructive actions. */
+export function ConfirmDialog({ title, children, confirmLabel = 'Confirm', busy = false, onConfirm, onCancel }) {
+  const dialogRef = useRef(null);
+  const cancelRef = useRef(onCancel);
+  useEffect(() => { cancelRef.current = onCancel; }, [onCancel]);
+  useEffect(() => {
+    const previous = document.activeElement;
+    dialogRef.current?.querySelector('button')?.focus();
+    const onKey = (event) => {
+      if (event.key === 'Escape') cancelRef.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previous?.focus?.();
+    };
+  }, []);
+  return (
+    <div className="overlay overlay-center" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" ref={dialogRef}>
+        <h2 id="confirm-title">{title}</h2>
+        <div className="dialog-body">{children}</div>
+        <div className="dialog-foot">
+          <button type="button" className="btn" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button type="button" className="btn btn-danger-solid" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Working…' : confirmLabel}
+          </button>
+        </div>
       </div>
-      <ul className="legend-row">
-        {counts.map((c) => (
-          <li key={c.level}>
-            <span className={`dot risk-dot-${c.level.toLowerCase()}`} aria-hidden="true" />
-            {c.level} <strong>{c.count.toLocaleString()}</strong>
-          </li>
-        ))}
-      </ul>
-    </figure>
+    </div>
   );
 }

@@ -1,71 +1,169 @@
-# Synthetic dataset
+# Datasets: what the platform reads, and the synthetic capture
 
-The data in `data/synthetic/` is produced by `scripts/generate_dataset.py`. It
-models the fields of a Bitcoin P2P/transaction investigation dataset. No real
-seized, intercepted or on-chain data is used, and no wallet, IP or activity
-refers to a real person or crime.
+## 1. What one row means
+
+A dataset is a **capture of Bitcoin transaction traffic**. Each row is one
+*sighting* of a transaction on the peer-to-peer network: at `timestamp`, the
+peer `src_ip:src_port` announced transaction `txid` to `dst_ip:dst_port`. The
+row repeats the transaction's blockchain fields (addresses, amounts, fee).
+
+The same transaction therefore appears in several rows, once per relay that was
+captured. Ingestion merges them: one transaction, with its sightings in time
+order. The earliest sighting is the *first-seen relay*, which origin inference
+later uses to decide where the transaction entered the network. A dataset with
+one row per transaction works too.
+
+## 2. Fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| `timestamp` | yes | When the sighting was captured |
+| `src_ip`, `src_port` | yes | The peer that announced the transaction |
+| `dst_ip`, `dst_port` | yes | The peer it was announced to |
+| `txid` | yes | Transaction id |
+| `input_addresses[]` | yes* | Wallet addresses spent from |
+| `output_addresses[]` | yes* | Wallet addresses paid |
+| `input_amounts[]` | yes | BTC per input address |
+| `output_amounts[]` | yes | BTC per output address |
+| `fee` | no | Derived as inputs minus outputs when absent |
+| `script_type` | no | `P2PKH`, `P2SH`, `P2WPKH`, `P2TR`, ... |
+| `geo_country`, `asn` | no | Used only when no offline GeoIP database resolves the IP |
+| `behavior_type` | no | Evaluation label. The models never read it |
+| `block_height`, `transaction_size` | no | Kept when present; size gives the fee rate |
+
+\* A row needs at least one input or output address.
+
+These are the minimum fields of the problem statement. A file that has only
+those ten columns is fully supported.
+
+### Formats
+
+| Format | Accepted layouts |
+|---|---|
+| CSV / TSV | Delimiter `,` tab `;` or `\|`, detected from the header line |
+| JSON | A top-level array, an object wrapping the list under `transactions` / `records` / `data` / ..., or JSON Lines (`.jsonl`, `.ndjson`) |
+| XML | Any element that carries a transaction id is a record, whatever its tag or depth. List fields may be nested elements, repeated tags or attributes |
+
+Every format may be gzip-compressed (`.csv.gz`, `.json.gz`, `.xml.gz`). Files
+are parsed as a stream, row by row, so the raw document is never held in memory;
+only the merged transactions are.
+
+### Tolerant parsing
+
+Capture tools name and encode these fields differently, so ingestion maps what
+it finds onto the schema and reports what it did.
+
+- **Column names** are matched case-insensitively against an alias table:
+  `tx_hash`, `hash`, `transaction_id` → `txid`; `source_ip`, `peer_ip`, `saddr`
+  → `src_ip`; `inputs`, `vin`, `from_addresses` → `input_addresses`; and so on
+  (`backend/ingestion/schema.py`). `ip:port` in one column is split.
+- **Lists** may be JSON arrays, Python-style lists, or text separated by `;`,
+  `|` or `,`. Inputs and outputs may also be lists of
+  `{"address": ..., "amount": ...}` objects.
+- **Timestamps** may be ISO-8601 (with `Z` or an offset), `YYYY-MM-DD HH:MM:SS`
+  style text, or Unix epochs in seconds, milliseconds, microseconds or
+  nanoseconds. Everything is stored as UTC.
+- **Amounts** are BTC. A `_sat` / `_satoshi` suffix on the column name marks
+  satoshis. Without it, a file whose amounts are all whole numbers reaching
+  10,000 is recognised as satoshis and converted.
+
+### What is rejected, and what is repaired
+
+| Problem | Outcome |
+|---|---|
+| No transaction id, no usable timestamp, no addresses, non-numeric or negative amounts | Row rejected, counted by reason |
+| Exact repeat of a sighting | Dropped as a duplicate |
+| Same `txid` with different addresses or amounts | First version kept, conflict counted |
+| Invalid IP or port | Row kept without that value |
+| Amounts missing on one side | Reconstructed from the other side and the fee |
+| Amount list not aligned with the address list | Total split evenly |
+| Outputs exceed inputs | Kept, fee set to 0 |
+
+The counts, example row numbers, the column mapping that was applied and the
+unmapped columns are returned by `GET /ingestion` and shown in the dashboard's
+data-quality panel.
+
+### GeoIP
+
+`geo_country` and `asn` describe the **source IP**. When an offline database is
+present in `data/geoip/` (DB-IP Lite, downloaded once by
+`scripts/download_geoip.py`, or MaxMind GeoLite2 placed there by hand), every IP
+is resolved locally and the dataset's own columns are ignored. Without a
+database the dataset's columns are used. The overview states which source was
+used.
+
+## 3. The synthetic capture
+
+No real seized or intercepted data is used. `scripts/generate_dataset.py`
+simulates a two-month Bitcoin economy in time order. Every address keeps a
+balance, so each transaction spends funds its inputs actually hold and
+`sum(inputs) = sum(outputs) + fee` exactly.
 
 ```bash
 uv run python scripts/generate_dataset.py --records 10000 --seed 42 --output-dir data/synthetic
 ```
 
-The same seed always produces the same files; the committed dataset is
-`--records 10000 --seed 42`.
+The same seed always produces the same files. `--records` scales the whole
+economy (users, victims, mules, rounds), not just the row count.
 
-## Schema
+### Who is in it (at 10,000 transactions)
 
-| Field | Meaning |
+| Actor | Behaviour |
 |---|---|
-| `timestamp` | UTC ISO-8601 time the transaction was observed |
-| `src_ip`, `src_port` | The node that relayed the transaction first (the spender's node or proxy) and its ephemeral port |
-| `dst_ip`, `dst_port` | The listening peer it was relayed to. `8333` is standard; illicit actors often use others |
-| `txid` | 64-hex transaction id |
-| `input_addresses[]`, `input_amounts[]` | Spent addresses and the amount each contributed (aligned lists) |
-| `output_addresses[]`, `output_amounts[]` | Receiving addresses and amounts (aligned lists) |
-| `fee` | `sum(inputs) − sum(outputs)`, from a fee rate in sat/vB |
-| `script_type` | Derived from the address type: P2PKH, P2SH_P2WPKH, P2WPKH, P2TR |
-| `geo_country`, `asn` | Synthetic fallback values; replaced by the GeoIP database at analysis time |
-| `block_height`, `transaction_size` | Block (one per 10 minutes) and estimated vbytes |
-| `behavior_type` | Evaluation label only; never a model feature |
+| 1,500 users | Own a few addresses, pay merchants, each other and exchanges, send change to new addresses. 6% are privacy users on 3 to 6 IPs, partly in anonymising networks, with 25% non-standard ports |
+| 4 exchanges | A deposit address per customer, swept together into a hot wallet; batched withdrawals |
+| 14 merchants | Receive payments and consolidate them |
+| CoinJoin coordinator | 28 equal-denomination mixing rounds among users |
+| Darknet vendor | Broadcasts from 26 IPs in 26 different networks, 35% non-standard ports. Cashes out at exchanges and through 3 mules, and keeps moving funds to new addresses of its own |
+| 2 ransomware groups | 40 victims each pay a collection address. The group consolidates, then launders through two peeling chains (12 to 24 hops), a fan-out/fan-in layering structure and CoinJoins. Mules forward within minutes to exchanges |
 
-Only the first ten fields (up to the amount lists) are required by the pipeline.
+Two details keep the task honest:
 
-## Simulation
+- **Unwitting recipients.** A fifth of the peels pay ordinary users, who are
+  licit. A system that flags everyone a criminal ever paid is penalised.
+- **Unreported group.** Victims of group 1 "report" 35% of its collection
+  addresses, which become the seed wallets. Group 2 is never reported, so it
+  must be found without any seed.
 
-The generator replays a two-month timeline with per-address balances, so every
-transaction spends funds its inputs hold.
+### The network layer
 
-| Actor | Behaviour | Label |
-|---|---|---|
-| 1,500 users | Own 1–4 addresses; pay merchants, peers and exchanges; change usually goes to a fresh address; 6% are benign VPN users with several IPs | `NORMAL` |
-| 4 exchanges | Batch withdrawals from a hot wallet; sweep customer deposit addresses into it | `EXCHANGE_LIKE` |
-| 14 merchants | Fresh invoice addresses, periodic sweeps to an exchange | `NORMAL` |
-| CoinJoin coordinator | Rounds of 5–11 participants with equal-denomination outputs | `MIXING_LIKE` |
-| Darknet vendor | Payouts broadcast from 26 networks, a third via mules | `HIGH_NETWORK_DIVERSITY` |
-| Ransomware group ×2 | 40 victims each pay a unique collection address → consolidation | `RANSOMWARE` |
-| | Two peeling chains of 12–24 hops, peeling to exchanges, mules and services | `PEELING_CHAIN` |
-| | Fan-out to 4–7 fresh intermediates, two hops each, reconverging on a sink, then cash-out | `LAYERING_LIKE` |
-| | Part of the proceeds joins CoinJoin rounds | `MIXING_LIKE` |
-| Money mules | Forward 98.5% of what they receive within 3–25 minutes, at high fee rates | `RAPID_TRANSFER` |
+- IPs come from 64 fixed public /24 networks, split into residential,
+  datacenter and anonymising ranges, so a real GeoIP database resolves them.
+- Each transaction is announced by its creator to one to three peers, which
+  relay it a few seconds later. Each announcement is a row.
+- The capture is imperfect on purpose: for 6% of transactions the creator's
+  link was not monitored, so the first row comes from a relay; 3% of
+  announcements are logged late; 8% of relays are one-off peers that never
+  appear again.
 
-**Network layer.** IPs come from 64 fixed public /24 networks, split into
-residential, datacenter and an anonymising (VPN/Tor-exit-like) pool used by
-illicit actors. Documentation, private and reserved ranges are never used,
-because GeoIP databases cannot resolve them.
+### Files
 
-**Seeds.** Only 35% of group 1's collection addresses are "reported" in
-`seed_wallets.txt`. Group 2 has no seeds, so it has to be found by the models.
-
-The dataset is cut to exactly `--records` transactions. Every illicit-flow and
-CoinJoin transaction is kept, and licit traffic is sampled evenly to fill the
-rest.
-
-## Files
-
-| File | Content |
+| File (`data/synthetic/`) | Content |
 |---|---|
-| `transactions.csv` | Array fields as JSON strings |
-| `transactions.json` | Native arrays |
-| `transactions.xml` | Nested `<address>` / `<amount>` elements |
-| `seed_wallets.txt` | Known-illicit seed addresses, one per line |
-| `ground_truth.json` | For every address: `entity_id`, `entity_kind`, `role`, `illicit`; plus each pattern's transaction ids. Used by `scripts/evaluate_models.py` only |
+| `transactions.csv` / `.json` / `.xml` | The same capture in three formats: 10,000 transactions in 20,341 rows, 20,342 addresses |
+| `seed_wallets.txt` | 14 reported ransomware addresses, one per line |
+| `ground_truth.json` | Used **only** for evaluation, never by the pipeline |
+
+`ground_truth.json` holds:
+
+| Key | Content |
+|---|---|
+| `wallets[address]` | `entity_id`, `entity_kind` (user, exchange, merchant, darknet_vendor, money_mule, ransomware_operator ...), `role`, `illicit`, and where it applies `group` (the operation) and `cashout_for` (the illicit customer of an exchange deposit address) |
+| `patterns[]` | `type` and `txids` of every generated peeling chain, layering structure, pass-through and CoinJoin |
+| `origin_ips[txid]` | The IP that really created each transaction |
+| `seed_wallets[]` | The reported addresses |
+
+`data/mock_uploads/bitcoin_transactions.csv` is a second sample (10,000
+independently drawn transactions, one row each, no ground truth) for trying an
+upload of a file that has one sighting per transaction.
+
+### Using your own data
+
+Upload the file in the dashboard, or:
+
+```bash
+uv run python scripts/run_analysis.py --input capture.json.gz --seeds known_bad.txt --output-dir out
+```
+
+Check the data-quality panel (or `POST /ingest`) first: it shows how the
+columns were mapped and what was rejected.

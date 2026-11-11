@@ -1,15 +1,16 @@
-"""CSV ingestion utilities for the synthetic Bitcoin investigation dataset."""
+"""CSV ingestion utilities (thin wrapper over the streaming reader in ``readers.py``)."""
 
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 from typing import Any
 
+from backend.ingestion.readers import read_csv
+
 
 def _coerce_field(value: Any) -> Any:
-    """Convert CSV values to Python-native types when they resemble JSON-like arrays."""
+    """Convert CSV text to Python values: JSON arrays, booleans, integers and floats."""
     if value is None:
         return value
     stripped = value.strip()
@@ -33,19 +34,9 @@ def _coerce_field(value: Any) -> Any:
 
 
 def parse_csv(path: str | Path) -> list[dict[str, Any]]:
-    """Parse a CSV dataset into a list of dictionaries.
+    """Parse a CSV dataset into a list of dictionaries with typed values.
 
-    Array-like fields such as input_addresses/output_addresses are decoded from JSON
-    strings when present.
+    Array-like fields such as input_addresses/output_addresses are decoded from
+    JSON strings when present. Use ``readers.read_csv`` to stream large files.
     """
-    csv_path = Path(path)
-    if not csv_path.exists():
-        raise FileNotFoundError(f"CSV file does not exist: {csv_path}")
-
-    rows: list[dict[str, Any]] = []
-    with csv_path.open("r", newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            cleaned = {key: _coerce_field(value) for key, value in row.items()}
-            rows.append(cleaned)
-    return rows
+    return [{key: _coerce_field(value) for key, value in row.items()} for row in read_csv(path)]

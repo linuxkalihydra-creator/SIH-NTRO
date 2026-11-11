@@ -1,0 +1,54 @@
+# Optional containers. The platform itself needs neither: `./run.sh` runs it as one Python process.
+#
+#   docker compose up -d neo4j          only the graph database (used by ./run.sh --neo4j)
+#   docker compose up -d --build        the platform and Neo4j together, on http://127.0.0.1:8000
+#
+# Images are pulled/built once while online; after that both run without network access.
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: sih-neo4j
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7474:7474"   # Neo4j Browser
+      - "127.0.0.1:7687:7687"   # Bolt (the platform connects here)
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-me-please}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512m
+      NEO4J_dbms_usage__report_enabled: "false"   # no telemetry: the deployment is offline
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  platform:
+    build: .
+    image: bitcoin-investigation-platform:latest
+    container_name: sih-platform
+    restart: unless-stopped
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-change-me-please}
+      DATASET_STORE_DIR: /app/data/raw/uploads
+    volumes:
+      - platform-data:/app/data/raw/uploads
+      - ./data/geoip:/app/data/geoip:ro        # DB-IP Lite / GeoLite2 .mmdb files, if downloaded
+
+volumes:
+  neo4j-data:
+  neo4j-logs:
+  platform-data:

@@ -48,6 +48,12 @@
   --graph-edge: #a3abb6;
   --seed-border: #111418;
 
+  /* Charts: one series colour for "all", the critical status colour for "flagged" (validated pair). */
+  --chart-all: #2a78d6;
+  --chart-flagged: var(--risk-critical);
+  --chart-grid: #e4e6ea;
+  --chart-axis: #b6bcc6;
+
   --radius: 6px;
   --shadow: 0 4px 14px rgba(20, 28, 40, 0.12);
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -98,6 +104,10 @@
     --graph-ip: #8a93a0;
     --graph-edge: #5a616d;
     --seed-border: #f4f6f8;
+
+    --chart-all: #3987e5;
+    --chart-grid: #2a2d34;
+    --chart-axis: #4a505b;
     --shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
   }
 }

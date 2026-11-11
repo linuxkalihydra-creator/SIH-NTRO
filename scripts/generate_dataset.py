@@ -19,11 +19,25 @@ and ``sum(inputs) = sum(outputs) + fee`` exactly. The network layer is simulated
 per entity: home networks, datacenter networks for services, and an anonymising
 pool (VPN/Tor-exit-like) with non-standard ports for illicit actors.
 
+**Network observations.** The dataset is a capture of transaction traffic, so one
+transaction usually appears in several rows: the creator's node announces it to
+one to three peers, and those peers relay it onward a few seconds later. Each row
+is one such sighting (``timestamp``, ``src_ip:src_port`` -> ``dst_ip:dst_port``)
+and repeats the transaction's blockchain fields. For a small share of
+transactions (``ORIGIN_MISS_RATE``) the creator's own link was not monitored, so
+the earliest row comes from a relay node instead. Two further imperfections keep
+the capture honest: a sensor sometimes logs the creator's announcement seconds
+late (``CAPTURE_LAG_RATE``), so a relay can appear first even though the creator
+was captured, and some relays are one-off peers that are never seen again
+(``TRANSIENT_RELAY_RATE``), so they cannot be recognised as relay nodes by their
+history. The true origin of every transaction is written to the ground truth so
+origin inference can be measured.
+
 Nothing here corresponds to real wallets, people or crimes. Besides the CSV, JSON
 and XML datasets, the generator writes ``ground_truth.json`` (per-address roles,
-illicit flags and pattern transaction ids, used for evaluation only) and
-``seed_wallets.txt`` (the ransomware addresses victims "reported", used as known
-illicit seeds for risk propagation).
+illicit flags, pattern transaction ids and true origin IPs, used for evaluation
+only) and ``seed_wallets.txt`` (the ransomware addresses victims "reported", used
+as known illicit seeds for risk propagation).
 """
 
 from __future__ import annotations
@@ -62,6 +76,12 @@ WINDOW_DAYS = 60
 START_BLOCK = 823_000
 STANDARD_PORT = 8333
 NONSTANDARD_PORTS = (8334, 18333, 9050, 9150, 28333, 38333, 50001)
+# Share of transactions whose creator was not on a monitored link: their first sighting is a relay node.
+ORIGIN_MISS_RATE = 0.06
+# Share of captured announcements that a sensor logs 0.5-6 s late (clock skew, queueing).
+CAPTURE_LAG_RATE = 0.03
+# Share of relays performed by a one-off peer (a node that is seen once and never again).
+TRANSIENT_RELAY_RATE = 0.08
 BECH32_CHARS = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 SATOSHI = 1e-8
@@ -108,6 +128,11 @@ def round_btc(value: float) -> float:
     return round(value + 0.0, 8)
 
 
+def _stamp(when: datetime) -> str:
+    """ISO-8601 UTC with millisecond precision: relay sightings are fractions of a second apart."""
+    return when.isoformat(timespec="milliseconds")
+
+
 @dataclass
 class Entity:
     """One real-world owner (a person, a service or a criminal group) of several addresses."""
@@ -120,6 +145,7 @@ class Entity:
     nonstandard_port_rate: float = 0.02
     fee_rate: tuple[float, float] = (4.0, 30.0)
     addresses: list[str] = field(default_factory=list)
+    group: str = ""  # the operation an illicit entity belongs to (an operator and its mules share one)
 
 
 class Economy:
@@ -135,6 +161,8 @@ class Economy:
         self.txids: set[str] = set()
         self.patterns: list[dict[str, Any]] = []
         self.seeds: list[str] = []
+        self.customer: dict[str, str] = {}      # exchange deposit address -> entity that uses it
+        self.origin_ips: dict[str, str] = {}    # txid -> IP of the node that created the transaction
 
     # ── identities ──────────────────────────────────────────────────────────
     def new_entity(self, kind: str, ips: list[str], illicit: bool = False, **kwargs: Any) -> Entity:
@@ -186,6 +214,45 @@ class Economy:
             return "P2SH_P2WPKH"
         return "P2PKH"
 
+    def observe(self, when: datetime, origin_ip: str, src_port: int, dst_port: int) -> list[dict[str, Any]]:
+        """Network sightings of one transaction in time order: the creator's announcements, then onward relays."""
+        rng = self.rng
+        sightings: list[tuple[datetime, str, int, str, int]] = []
+        peers = rng.sample(LISTENING_PEERS, rng.choices((1, 2, 3), weights=(7, 2, 1))[0])
+        captured = rng.random() >= ORIGIN_MISS_RATE
+        if captured:
+            lag = rng.uniform(0.5, 6.0) if rng.random() < CAPTURE_LAG_RATE else 0.0
+            for position, peer in enumerate(peers):
+                delay = lag + (0.0 if position == 0 else rng.uniform(0.005, 0.4))
+                sightings.append((when + timedelta(seconds=delay), origin_ip, src_port, peer, dst_port))
+        relays = rng.choices((0, 1, 2, 3, 4), weights=(55, 28, 11, 4, 2))[0]
+        for _ in range(relays if captured else max(relays, 1)):
+            relay = rng.choice(peers)
+            if rng.random() < TRANSIENT_RELAY_RATE:  # a peer of that peer which happens to be on a monitored link once
+                relay = str(IPv4Address(int(rng.choice(RESIDENTIAL_NETWORKS).network_address) + rng.randint(1, 254)))
+            target = rng.choice(LISTENING_PEERS)
+            while target == relay:
+                target = rng.choice(LISTENING_PEERS)
+            # A relay either answers on its listening port or dials out from an ephemeral one.
+            ports = (STANDARD_PORT, rng.randint(32768, 60999)) if rng.random() < 0.5 else (rng.randint(32768, 60999), STANDARD_PORT)
+            sightings.append((when + timedelta(seconds=0.3 + rng.gammavariate(2.0, 1.6)), relay, ports[0], target, ports[1]))
+        sightings.sort(key=lambda sighting: sighting[0])
+        return [{"timestamp": _stamp(at), "src_ip": source, "src_port": source_port, "dst_ip": target, "dst_port": target_port,
+                 "geo_country": NETWORK_COUNTRY[network_of(source)], "asn": NETWORK_ASN[network_of(source)]}
+                for at, source, source_port, target, target_port in sightings]
+
+    def publish(self, when: datetime, origin_ip: str, dst_port: int, transaction: dict[str, Any]) -> dict[str, Any]:
+        """Attach the network sightings to a transaction and store it; the first sighting gives the record's own endpoints."""
+        observations = self.observe(when, origin_ip, self.rng.randint(32768, 60999), dst_port)
+        txid = self._txid()
+        merged = {**observations[0], "txid": txid, **transaction}
+        record = {key: merged[key] for key in CSV_FIELDS}
+        if len(observations) > 1:
+            record["observations"] = observations
+        self.origin_ips[txid] = origin_ip
+        self.records.append(record)
+        return record
+
     def emit(self, when: datetime, sender: Entity, inputs: list[str], payments: list[tuple[str, float]], behavior: str,
              change_to: str | None = None, spend_all: bool = True, fee_rate: float | None = None) -> dict[str, Any] | None:
         """Spend ``inputs`` (whole balances, like UTXOs) to ``payments`` plus change; return the record or None if unaffordable."""
@@ -210,30 +277,18 @@ class Economy:
             self.balance[address] = 0.0
         for address, amount in outputs:
             self.balance[address] = round_btc(self.balance.get(address, 0.0) + amount)
-        src_ip = self.rng.choice(sender.ips)
-        dst_ip = self.rng.choice(LISTENING_PEERS)
         nonstandard = self.rng.random() < sender.nonstandard_port_rate
-        record = {
-            "timestamp": when.replace(microsecond=0).isoformat(),
-            "src_ip": src_ip,
-            "dst_ip": dst_ip,
-            "src_port": self.rng.randint(32768, 60999),
-            "dst_port": self.rng.choice(NONSTANDARD_PORTS) if nonstandard else STANDARD_PORT,
-            "txid": self._txid(),
+        return self.publish(when, self.rng.choice(sender.ips), self.rng.choice(NONSTANDARD_PORTS) if nonstandard else STANDARD_PORT, {
             "input_addresses": inputs,
             "output_addresses": [address for address, _ in outputs],
             "input_amounts": input_amounts,
             "output_amounts": [amount for _, amount in outputs],
             "fee": round_btc(fee),
             "script_type": self._script_type(inputs[0]),
-            "geo_country": NETWORK_COUNTRY[network_of(src_ip)],
-            "asn": NETWORK_ASN[network_of(src_ip)],
             "behavior_type": behavior,
             "block_height": START_BLOCK + int((when - START_TIME).total_seconds() // 600),
             "transaction_size": size,
-        }
-        self.records.append(record)
-        return record
+        })
 
     def pay(self, when: datetime, sender: Entity, payments: list[tuple[str, float]], behavior: str,
             fresh_change: bool = True, fee_rate: float | None = None) -> dict[str, Any] | None:
@@ -309,16 +364,17 @@ class Scenario:
             self.users.append(user)
 
         self.coordinator = eco.new_entity("coinjoin_coordinator", _ips(rng, DATACENTER_NETWORKS, 2), nonstandard_port_rate=0.0)
-        self.vendor = eco.new_entity("darknet_vendor", _ips(rng, NETWORK_RANGES, 26), illicit=True, nonstandard_port_rate=0.35, fee_rate=(10, 40))
+        self.vendor = eco.new_entity("darknet_vendor", _ips(rng, NETWORK_RANGES, 26), illicit=True, nonstandard_port_rate=0.35, fee_rate=(10, 40), group="darknet_vendor")
         for _ in range(4):
             eco.fund(eco.new_address(self.vendor, "darknet_vendor"), rng.uniform(3, 8))
-        self.vendor_mules = [eco.new_entity("money_mule", rng.sample(self.vendor.ips, 3) + _ips(rng, RESIDENTIAL_NETWORKS, 1), illicit=True, nonstandard_port_rate=0.3, fee_rate=(60, 150)) for _ in range(3)]
+        self.vendor_mules = [eco.new_entity("money_mule", rng.sample(self.vendor.ips, 3) + _ips(rng, RESIDENTIAL_NETWORKS, 1), illicit=True, nonstandard_port_rate=0.3, fee_rate=(60, 150), group="darknet_vendor") for _ in range(3)]
 
     def deposit_address(self, exchange: Entity, customer: Entity) -> str:
         """One reusable deposit address per (exchange, customer), owned by the exchange."""
         deposits = exchange.deposits  # type: ignore[attr-defined]
         if customer.entity_id not in deposits:
             deposits[customer.entity_id] = self.economy.new_address(exchange, "exchange_deposit")
+            self.economy.customer[deposits[customer.entity_id]] = customer.entity_id
         return deposits[customer.entity_id]
 
     # ── licit activity ──────────────────────────────────────────────────────
@@ -403,27 +459,17 @@ class Scenario:
             eco.balance[address] = 0.0
         for address, amount in outputs:
             eco.balance[address] = round_btc(eco.balance.get(address, 0.0) + amount)
-        src_ip = rng.choice(self.coordinator.ips)
-        record = {
-            "timestamp": when.replace(microsecond=0).isoformat(),
-            "src_ip": src_ip,
-            "dst_ip": rng.choice(LISTENING_PEERS),
-            "src_port": rng.randint(32768, 60999),
-            "dst_port": STANDARD_PORT,
-            "txid": eco._txid(),
+        record = eco.publish(when, rng.choice(self.coordinator.ips), STANDARD_PORT, {  # the coordinator broadcasts, not the participants
             "input_addresses": inputs,
             "output_addresses": [address for address, _ in outputs],
             "input_amounts": input_amounts,
             "output_amounts": [amount for _, amount in outputs],
             "fee": fee,
             "script_type": "P2WPKH",
-            "geo_country": NETWORK_COUNTRY[network_of(src_ip)],
-            "asn": NETWORK_ASN[network_of(src_ip)],
             "behavior_type": "MIXING_LIKE",
             "block_height": START_BLOCK + int((when - START_TIME).total_seconds() // 600),
             "transaction_size": int(10.5 + 68 * len(inputs) + 31 * len(outputs)),
-        }
-        eco.records.append(record)
+        })
         eco.patterns.append({"type": "coinjoin", "txids": [record["txid"]]})
         return record
 
@@ -445,9 +491,10 @@ class Scenario:
     # ── ransomware campaign ─────────────────────────────────────────────────
     def ransomware_campaign(self, group_index: int, report_rate: float) -> None:
         rng, eco = self.rng, self.economy
-        operator = eco.new_entity("ransomware_operator", _ips(rng, ANONYMIZING_NETWORKS, 8), illicit=True, nonstandard_port_rate=0.45, fee_rate=(15, 60))
+        group = f"ransomware_group_{group_index + 1}"
+        operator = eco.new_entity("ransomware_operator", _ips(rng, ANONYMIZING_NETWORKS, 8), illicit=True, nonstandard_port_rate=0.45, fee_rate=(15, 60), group=group)
         mule_ips = _ips(rng, RESIDENTIAL_NETWORKS, 4) + operator.ips[:2]  # compromised hosts plus shared operator infrastructure
-        mules = [eco.new_entity("money_mule", rng.sample(mule_ips, 3), illicit=True, nonstandard_port_rate=0.3, fee_rate=(60, 150)) for _ in range(max(2, int(6 * self.scale)))]
+        mules = [eco.new_entity("money_mule", rng.sample(mule_ips, 3), illicit=True, nonstandard_port_rate=0.3, fee_rate=(60, 150), group=group) for _ in range(max(2, int(6 * self.scale)))]
         victims = rng.sample(self.users, min(len(self.users), max(4, int(40 * self.scale))))
         start = 4 + group_index * 12
         collection: list[str] = []
@@ -617,6 +664,13 @@ def generate_world(records: int = 10000, seed: int = 42) -> tuple[list[dict[str,
     for address in sorted(seen):
         entity = eco.entities[eco.owner[address]]
         wallets[address] = {"entity_id": entity.entity_id, "entity_kind": entity.kind, "role": eco.role[address], "illicit": entity.illicit}
+        if entity.group:
+            wallets[address]["group"] = entity.group
+        customer = eco.entities.get(eco.customer.get(address, ""))
+        if customer is not None and customer.illicit:
+            # An exchange-owned deposit address used by an illicit customer: not the criminal's own wallet,
+            # but the cash-out point an investigator would take to the exchange.
+            wallets[address]["cashout_for"] = customer.entity_id
     patterns = []
     for pattern in eco.patterns:
         txids = [txid for txid in pattern["txids"] if txid in kept]
@@ -627,6 +681,7 @@ def generate_world(records: int = 10000, seed: int = 42) -> tuple[list[dict[str,
         "seed_wallets": [address for address in eco.seeds if address in seen],
         "wallets": wallets,
         "patterns": patterns,
+        "origin_ips": {record["txid"]: eco.origin_ips[record["txid"]] for record in selected},
     }
     return selected, counts, ground_truth
 
@@ -690,40 +745,54 @@ CSV_FIELDS = [
 ]
 
 
+def observation_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten transactions into capture rows: one row per network sighting, in time order."""
+    rows = []
+    for record in records:
+        base = {key: record[key] for key in CSV_FIELDS}
+        for observation in record.get("observations") or [{}]:
+            rows.append({**base, **observation})
+    rows.sort(key=lambda row: (row["timestamp"], row["txid"]))
+    return rows
+
+
 def write_csv(records: list[dict[str, Any]], output_path: Path) -> None:
     """Write CSV with array fields serialized as JSON strings."""
     with output_path.open("w", newline="", encoding="utf-8") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        for record in records:
+        for row in observation_rows(records):
             writer.writerow({
-                **record,
-                "input_addresses": json.dumps(record["input_addresses"]),
-                "output_addresses": json.dumps(record["output_addresses"]),
-                "input_amounts": json.dumps(record["input_amounts"]),
-                "output_amounts": json.dumps(record["output_amounts"]),
+                **row,
+                "input_addresses": json.dumps(row["input_addresses"]),
+                "output_addresses": json.dumps(row["output_addresses"]),
+                "input_amounts": json.dumps(row["input_amounts"]),
+                "output_amounts": json.dumps(row["output_amounts"]),
             })
 
 
 def write_json(records: list[dict[str, Any]], output_path: Path) -> None:
-    """Write the same records as JSON, keeping arrays as native lists."""
-    with output_path.open("w", encoding="utf-8") as fh:
-        json.dump(records, fh, indent=2)
+    """Write the same rows as a JSON array (one object per line), keeping arrays as native lists."""
+    with output_path.open("w", encoding="utf-8", newline="\n") as fh:  # the same bytes on every platform
+        fh.write("[\n")
+        fh.write(",\n".join(json.dumps(row, separators=(",", ":")) for row in observation_rows(records)))
+        fh.write("\n]\n")
 
 
 def write_xml(records: list[dict[str, Any]], output_path: Path) -> None:
     """Write the same records as XML with nested array elements."""
     root = ET.Element("transactions")
     scalar_fields = ["timestamp", "src_ip", "dst_ip", "src_port", "dst_port", "txid", "fee", "script_type", "geo_country", "asn", "behavior_type", "block_height", "transaction_size"]
-    for record in records:
+    for row in observation_rows(records):
         item = ET.SubElement(root, "transaction")
         for field_name in scalar_fields:
-            ET.SubElement(item, field_name).text = str(record[field_name])
+            ET.SubElement(item, field_name).text = str(row[field_name])
         for list_name, child_name in (("input_addresses", "address"), ("output_addresses", "address"), ("input_amounts", "amount"), ("output_amounts", "amount")):
             container = ET.SubElement(item, list_name)
-            for value in record[list_name]:
+            for value in row[list_name]:
                 ET.SubElement(container, child_name).text = str(value)
-    ET.ElementTree(root).write(output_path, encoding="utf-8", xml_declaration=True)
+    with output_path.open("wb") as handle:  # binary, so the bytes are the same on every platform
+        ET.ElementTree(root).write(handle, encoding="utf-8", xml_declaration=True)
 
 
 def write_outputs(records: list[dict[str, Any]], output_dir: Path) -> tuple[Path, Path, Path]:
@@ -742,8 +811,8 @@ def write_ground_truth(ground_truth: dict[str, Any], output_dir: Path) -> tuple[
     """Write evaluation labels and the known-illicit seed list next to the dataset."""
     truth_path = output_dir / "ground_truth.json"
     seeds_path = output_dir / "seed_wallets.txt"
-    truth_path.write_text(json.dumps(ground_truth, indent=1), encoding="utf-8")
-    seeds_path.write_text("".join(f"{address}\n" for address in ground_truth["seed_wallets"]), encoding="utf-8")
+    truth_path.write_text(json.dumps(ground_truth, indent=1), encoding="utf-8", newline="\n")
+    seeds_path.write_text("".join(f"{address}\n" for address in ground_truth["seed_wallets"]), encoding="utf-8", newline="\n")
     return truth_path, seeds_path
 
 
@@ -751,13 +820,17 @@ def print_summary(records: list[dict[str, Any]], outputs: tuple[Path, ...], beha
     """Print a user-friendly summary of the generated synthetic dataset."""
     wallets = ground_truth["wallets"]
     print("Synthetic dataset generated successfully.\n")
-    print(f"Records: {len(records)}")
+    rows = observation_rows(records)
+    print(f"Transactions: {len(records)}")
+    print(f"Capture rows (network observations): {len(rows)}")
     print("Behavior distribution:")
     for profile in SUPPORTED_BEHAVIORS:
         print(f"  {profile}: {behavior_counts.get(profile, 0)}")
     print(f"Addresses: {len(wallets)} ({sum(1 for item in wallets.values() if item['illicit'])} illicit)")
     print(f"Entities: {len({item['entity_id'] for item in wallets.values()})}")
-    print(f"IPs: {len({record['src_ip'] for record in records} | {record['dst_ip'] for record in records})}")
+    print(f"IPs: {len({row['src_ip'] for row in rows} | {row['dst_ip'] for row in rows})}")
+    missed = sum(1 for record in records if record["src_ip"] != ground_truth["origin_ips"][record["txid"]])
+    print(f"Transactions whose creator was not captured (first row is a relay): {missed}")
     print(f"Patterns: {dict(Counter(pattern['type'] for pattern in ground_truth['patterns']))}")
     print(f"Seed wallets: {len(ground_truth['seed_wallets'])}")
     print("Output:")
@@ -768,7 +841,7 @@ def print_summary(records: list[dict[str, Any]], outputs: tuple[Path, ...], beha
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for record count and seed."""
     parser = argparse.ArgumentParser(description="Generate a synthetic Bitcoin transaction/network dataset.")
-    parser.add_argument("--records", type=int, default=10000, help="Number of synthetic records to generate.")
+    parser.add_argument("--records", type=int, default=10000, help="Number of synthetic transactions to generate; each is observed in one or more capture rows.")
     parser.add_argument("--seed", type=int, default=42, help="Deterministic random seed.")
     parser.add_argument("--output-dir", default="data/synthetic", help="Directory for the dataset, ground truth and seed list.")
     return parser.parse_args()

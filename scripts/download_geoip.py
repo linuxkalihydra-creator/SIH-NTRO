@@ -36,7 +36,7 @@ def download(name: str, output_dir: Path) -> Path:
     for month in _months():  # the current month's file appears a few days into the month
         url = URL.format(name=name, month=month)
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "bitcoin-investigation-platform/0.1 (+offline GeoIP setup)"})
+            request = urllib.request.Request(url, headers={"User-Agent": "geoip-database-fetch/1.0"})
             with urllib.request.urlopen(request, timeout=60) as response, gzip.GzipFile(fileobj=response) as unpacked, target.open("wb") as handle:
                 shutil.copyfileobj(unpacked, handle)
             print(f"Downloaded {url} -> {target} ({target.stat().st_size / 1e6:.1f} MB)")
@@ -54,8 +54,11 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     for name in DATABASES.values():
         download(name, output_dir)
-    import geoip2.database
-
+    try:  # a lookup proves the file is usable; the download itself needs nothing but the standard library
+        import geoip2.database
+    except ImportError:
+        print("Downloaded. (geoip2 is not installed for this Python, so the lookup check was skipped.)")
+        return
     with geoip2.database.Reader(str(output_dir / "dbip-country-lite.mmdb")) as reader:
         print("Check: 8.8.8.8 ->", reader.country("8.8.8.8").country.iso_code)
 

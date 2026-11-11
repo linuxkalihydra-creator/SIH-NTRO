@@ -1,0 +1,11 @@
+# Files that run on Linux keep LF line endings on every platform, including a Windows checkout used from WSL.
+*.sh text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+.env.example text eol=lf
+
+# CSV datasets use CRLF row terminators (RFC 4180, the default of Python's csv module) on every platform.
+*.csv -text
+*.mmdb binary
+*.gz binary

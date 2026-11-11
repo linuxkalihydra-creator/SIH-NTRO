@@ -1,7 +1,7 @@
 [project]
 name = "bitcoin-investigation-platform"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "Offline AI-powered monitoring and analysis of Bitcoin transaction traffic: ingestion, network/blockchain correlation, ML detection and explainable investigative leads."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -32,3 +32,7 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
